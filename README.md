@@ -1,5 +1,4 @@
 extrablatt_v2
-
 =====================
 [![Crates.io](https://img.shields.io/crates/v/extrablatt_v2.svg)](https://crates.io/crates/extrablatt_v2)
 [![Documentation](https://docs.rs/extrablatt_v2/badge.svg)](https://docs.rs/extrablatt_v2)
