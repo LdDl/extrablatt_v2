@@ -52,6 +52,8 @@ fn clean_author(s: &str) -> String {
     for stop in AUTHOR_STOP_WORDS.iter() {
         out = out.replace(stop, "");
     }
+    // Remove HTML tags
+    out = Regex::new(r"<[^>]+>").unwrap().replace_all(&out, "").to_string();
     out.trim_matches(|c: char| c == '.' || c == ',' || c == '-' || c == '/' || c.is_whitespace()).to_string()
 }
 
@@ -61,7 +63,7 @@ fn contains_digits(s: &str) -> bool {
 
 fn is_valid_name(s: &str) -> bool {
     let word_count = s.split_whitespace().count();
-    word_count > 1 && word_count < 5 && !contains_digits(s)
+    word_count > 1 && word_count < 5 && !contains_digits(s) && !s.contains('<') && !s.contains('>')
 }
 
 fn parse_byline(s: &str) -> Vec<String> {
@@ -70,7 +72,14 @@ fn parse_byline(s: &str) -> Vec<String> {
     for token in s.split(|c| c == '·' || c == ',' || c == '|' || c == '/' || c == '\u{a0}') {
         let t = token.trim();
         if is_valid_name(t) {
-            out.push(clean_author(t));
+            // If more than 2 words, keep only first two (to avoid picking up extra words after name)
+            let words: Vec<&str> = t.split_whitespace().collect();
+            let name = if words.len() > 2 {
+                words[..2].join(" ")
+            } else {
+                t.to_string()
+            };
+            out.push(clean_author(&name));
         }
     }
     out
@@ -239,11 +248,14 @@ pub trait Extractor {
             }
         }
 
-        // Deduplicate and filter
+        // Deduplicate and filter (case-insensitive, trimmed)
+        let mut seen = HashSet::new();
         let mut result = Vec::new();
         for author in authors {
             let a = clean_author(&author);
-            if is_valid_name(&a) && !a.is_empty() && !result.contains(&a) {
+            let key = a.to_lowercase();
+            if is_valid_name(&a) && !a.is_empty() && !seen.contains(&key) {
+                seen.insert(key);
                 result.push(a);
             }
         }
