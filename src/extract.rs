@@ -259,6 +259,8 @@ pub trait Extractor {
                 result.push(a);
             }
         }
+        // Sort authors alphabetically for deterministic output
+        result.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
         result.into_iter().map(Cow::Owned).collect()
     }
 
