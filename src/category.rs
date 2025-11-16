@@ -1,7 +1,6 @@
 use crate::error::ExtrablattError;
 use crate::language::Language;
 use crate::{Article, ArticleStream, DefaultExtractor, Extractor};
-use anyhow::Result;
 use futures::Stream;
 use std::borrow::Borrow;
 use url::Url;
@@ -24,7 +23,7 @@ impl Category {
     /// # Example
     ///
     /// ```rust
-    ///  use extrablatt::{Category, Language};
+    ///  use extrablatt_v2::{Category, Language};
     ///  let category = Category::new("https://cnn.com/German/".parse().unwrap());
     ///  assert_eq!(category.language_hint(), Some(Language::German));
     /// ```
@@ -54,8 +53,8 @@ impl Category {
     /// [`crate::DefaultExtractor`].
     pub async fn into_stream(
         self,
-    ) -> Result<impl Stream<Item = std::result::Result<Article, ExtrablattError>>> {
-        Ok(self.into_stream_with_extractor(DefaultExtractor).await?)
+    ) -> Result<impl Stream<Item = Result<Article, ExtrablattError>>, ExtrablattError> {
+        self.into_stream_with_extractor(DefaultExtractor).await
     }
 
     /// Fetch all article urls from the page this category's url points to and
@@ -64,8 +63,8 @@ impl Category {
     pub async fn into_stream_with_extractor<TExtractor: Extractor + Unpin>(
         self,
         extractor: TExtractor,
-    ) -> Result<impl Stream<Item = std::result::Result<Article, ExtrablattError>>> {
-        Ok(ArticleStream::new_with_extractor(self.url, extractor).await?)
+    ) -> Result<impl Stream<Item = Result<Article, ExtrablattError>>, ExtrablattError> {
+        ArticleStream::new_with_extractor(self.url, extractor).await
     }
 }
 

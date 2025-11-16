@@ -31,4 +31,23 @@ pub enum ExtrablattError {
         /// The found article and its content.
         article: Box<PureArticle>,
     },
+    /// The base URL was not initialized.
+    #[error("Url of the article must be initialized.")]
+    UrlNotInitialized,
+    /// The base URL is invalid.
+    #[error("url {url:?} can not be a base url")]
+    BaseUrlInvalid {
+        url: reqwest::Url,
+    },
+    /// Failed to parse user agent header.
+    #[error("Failed to parse user agent header")]
+    UserAgentParseError,
+    /// Error from reqwest.
+    #[error("Reqwest error: {0}")]
+    Reqwest(#[source] reqwest::Error),
+    /// Error parsing URL.
+    #[error("Failed to parse URL: {error}")]
+    UrlParseError {
+        error: reqwest::Error,
+    },
 }
