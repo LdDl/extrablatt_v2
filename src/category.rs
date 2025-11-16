@@ -24,7 +24,7 @@ impl Category {
     /// # Example
     ///
     /// ```rust
-    ///  use extrablatt::{Category, Language};
+    ///  use extrablatt_v2::{Category, Language};
     ///  let category = Category::new("https://cnn.com/German/".parse().unwrap());
     ///  assert_eq!(category.language_hint(), Some(Language::German));
     /// ```

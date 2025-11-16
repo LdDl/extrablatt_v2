@@ -136,7 +136,7 @@ impl Borrow<Url> for ArticleUrl {
 /// Download a single article directly
 ///
 /// ```no_run
-/// # use extrablatt::Article;
+/// # use extrablatt_v2::Article;
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let article = Article::builder("http://example.com/")?.get().await?;
@@ -206,7 +206,7 @@ impl Article {
     /// Convenience method for:
     ///
     /// ```no_run
-    ///  # use extrablatt::Article;
+    ///  # use extrablatt_v2::Article;
     ///  # #[tokio::main]
     ///  # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ///        let content = Article::builder("http://example.com")?.get().await?.content;

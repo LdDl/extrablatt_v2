@@ -13,7 +13,7 @@
 //! Extract all content from a single news article
 //!
 //! ```no_run
-//!  extrablatt::Article::get("http://example.com/interesting-article.html");
+//!  extrablatt_v2::Article::get("http://example.com/interesting-article.html");
 //! ```
 //!
 //! A [`crate::Category`] represents a broader collection of articles, like Sports or Politics. Categores usually have their own designated page, e.g. `https://some-news.com/sports`. By targeting specific [`crate::Category`], Extrablatt tries to identify all news articles on the categorie's page and then scrape them afterwards.
@@ -23,7 +23,7 @@
 //!
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut stream = extrablatt::Category::new("https://some-news.com/sports".parse().unwrap())
+//! let mut stream = extrablatt_v2::Category::new("https://some-news.com/sports".parse().unwrap())
 //!     .into_stream()
 //!     .await?;
 //! while let Some(article) = stream.next().await {
@@ -48,7 +48,7 @@
 //!
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut site = extrablatt::Extrablatt::builder("https://some-news.com/")?.build().await?;
+//! let mut site = extrablatt_v2::Extrablatt::builder("https://some-news.com/")?.build().await?;
 //! site.download_all_remaining_categories().await;
 //! for(url, content) in site.download_articles().await.successes() {
 //!     // ...
@@ -65,7 +65,7 @@
 //!
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let site = extrablatt::Extrablatt::builder("https://some-news.com/")?.build().await?;
+//! let site = extrablatt_v2::Extrablatt::builder("https://some-news.com/")?.build().await?;
 //!
 //! let mut stream = site.into_stream();
 //! while let Some(article) = stream.next().await {
@@ -85,8 +85,8 @@
 //! the trait must be implemented for a custom extractor.
 //!
 //! ```no_run
-//! use extrablatt::{Extractor, Language};
-//! use extrablatt::select::{predicate::Attr, document::Document};
+//! use extrablatt_v2::{Extractor, Language};
+//! use extrablatt_v2::select::{predicate::Attr, document::Document};
 //! use std::borrow::Cow;
 //!
 //! pub struct MyExtractor {
@@ -104,7 +104,7 @@
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let extractor = MyExtractor{};
-//! let article = extrablatt::Article::get_with_extractor(
+//! let article = extrablatt_v2::Article::get_with_extractor(
 //!     "http://example.com/interesting-article.html",
 //!     &extractor,
 //! )

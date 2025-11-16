@@ -116,7 +116,7 @@ impl<TExtractor: Extractor> Extrablatt<TExtractor> {
     /// Loop over all downloaded articles.
     ///
     /// ```no_run
-    /// # use extrablatt::Extrablatt;
+    /// # use extrablatt_v2::Extrablatt;
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ///     let mut site = Extrablatt::builder("https://cnn.com/")?.build().await?;
@@ -485,8 +485,8 @@ impl ArticleStream<DefaultExtractor> {
     /// referenced on `https:://example.com/some/path`
     ///
     /// ```no_run
-    /// # use extrablatt::ArticleStream;
-    /// # use tokio::stream::StreamExt;
+    /// # use extrablatt_v2::ArticleStream;
+    /// # use futures::StreamExt;
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut stream = ArticleStream::new("https:://example.com/some/path").await?;

@@ -4,8 +4,8 @@ use futures::{stream, StreamExt};
 use structopt::StructOpt;
 use url::Url;
 
-use extrablatt::article::PureArticle;
-use extrablatt::{Article, Category, Config, Extrablatt};
+use extrablatt_v2::article::PureArticle;
+use extrablatt_v2::{Article, Category, Config, Extrablatt};
 
 #[allow(missing_docs)]
 #[derive(Debug, StructOpt)]
