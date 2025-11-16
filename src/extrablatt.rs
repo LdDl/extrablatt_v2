@@ -51,7 +51,7 @@ impl Extrablatt<DefaultExtractor> {
     ///
     /// Same as calling [`ExtrablattBuilder::new`].
     #[inline]
-    pub fn builder<T: IntoUrl>(url: T) -> std::result::Result<ExtrablattBuilder, ExtrablattError> {
+    pub fn builder<T: IntoUrl>(url: T) -> Result<ExtrablattBuilder, ExtrablattError> {
         ExtrablattBuilder::new(url)
     }
 }
@@ -203,7 +203,7 @@ impl<TExtractor: Extractor> Extrablatt<TExtractor> {
     pub async fn download_category(
         &mut self,
         category: Category,
-    ) -> std::result::Result<&Document, ExtrablattError> {
+    ) -> Result<&Document, ExtrablattError> {
         if self
             .categories
             .get(&category)
@@ -253,7 +253,7 @@ impl<TExtractor: Extractor> Extrablatt<TExtractor> {
     async fn download_categories(
         &mut self,
         items: Vec<Category>,
-    ) -> Vec<std::result::Result<Category, (Category, ExtrablattError)>> {
+    ) -> Vec<Result<Category, (Category, ExtrablattError)>> {
         let requests = stream::iter(items.into_iter().map(|cat| {
             self.client
                 .get(cat.url.clone())
@@ -301,7 +301,7 @@ impl<TExtractor: Extractor> Extrablatt<TExtractor> {
     /// previous attempts.
     pub async fn retry_download_categories(
         &mut self,
-    ) -> Vec<std::result::Result<Category, (Category, ExtrablattError)>> {
+    ) -> Vec<Result<Category, (Category, ExtrablattError)>> {
         let items: Vec<_> = self
             .categories
             .iter()
@@ -320,7 +320,7 @@ impl<TExtractor: Extractor> Extrablatt<TExtractor> {
     /// haven't been requested yet.
     pub async fn download_all_remaining_categories(
         &mut self,
-    ) -> Vec<std::result::Result<Category, (Category, ExtrablattError)>> {
+    ) -> Vec<Result<Category, (Category, ExtrablattError)>> {
         let items: Vec<_> = self
             .categories
             .iter()
@@ -337,7 +337,7 @@ impl<TExtractor: Extractor> Extrablatt<TExtractor> {
 
     /// Refresh the main page, insert new categories and return the old
     /// document.
-    pub async fn refresh_homepage(&mut self) -> std::result::Result<Document, ExtrablattError> {
+    pub async fn refresh_homepage(&mut self) -> Result<Document, ExtrablattError> {
         let (main_page, _) = self
             .get_document(self.base_url.clone())
             .await
@@ -354,7 +354,7 @@ impl<TExtractor: Extractor> Extrablatt<TExtractor> {
     async fn get_document(
         &self,
         url: Url,
-    ) -> std::result::Result<(Document, Instant), (DocumentDownloadState, ExtrablattError)> {
+    ) -> Result<(Document, Instant), (DocumentDownloadState, ExtrablattError)> {
         let resp = self.client.get(url).send().await;
         DocumentDownloadState::from_response(resp).await
     }
@@ -370,7 +370,7 @@ impl<TExtractor: Extractor + Unpin> Extrablatt<TExtractor> {
     /// [`crate::Article`]s.
     pub fn into_stream(
         mut self,
-    ) -> impl Stream<Item = std::result::Result<Article, ExtrablattError>> {
+    ) -> impl Stream<Item = Result<Article, ExtrablattError>> {
         let mut articles = Vec::new();
         let mut article_responses = Vec::new();
 
@@ -453,9 +453,9 @@ impl<TExtractor: Extractor + Unpin> Extrablatt<TExtractor> {
 }
 
 type PaperResponse =
-    Pin<Box<dyn Future<Output = std::result::Result<(Url, Bytes), ExtrablattError>>>>;
+    Pin<Box<dyn Future<Output = Result<(Url, Bytes), ExtrablattError>>>>;
 
-type ReadyResponse = (usize, std::result::Result<(Url, Bytes), ExtrablattError>);
+type ReadyResponse = (usize, Result<(Url, Bytes), ExtrablattError>);
 
 /// Stream for getting a `Article` each at a time.
 #[must_use = "streams do nothing unless polled"]
@@ -495,7 +495,7 @@ impl ArticleStream<DefaultExtractor> {
     /// #   Ok(())
     /// # }
     /// ```
-    pub async fn new<T: IntoUrl>(url: T) -> std::result::Result<ArticleStream<DefaultExtractor>, ExtrablattError> {
+    pub async fn new<T: IntoUrl>(url: T) -> Result<ArticleStream<DefaultExtractor>, ExtrablattError> {
         Ok(ArticleStream::new_with_extractor(url, DefaultExtractor).await?)
     }
 }
@@ -507,7 +507,7 @@ impl<TExtractor: Extractor + Unpin> ArticleStream<TExtractor> {
     pub async fn new_with_extractor<T: IntoUrl>(
         url: T,
         extractor: TExtractor,
-    ) -> std::result::Result<ArticleStream<TExtractor>, ExtrablattError> {
+    ) -> Result<ArticleStream<TExtractor>, ExtrablattError> {
         let paper = ExtrablattBuilder::new(url)?.build_with_extractor(extractor).await?;
 
         let article_responses = paper
@@ -556,7 +556,7 @@ impl<TExtractor: Extractor + Unpin> ArticleStream<TExtractor> {
 }
 
 impl<TExtractor: Extractor + Unpin> Stream for ArticleStream<TExtractor> {
-    type Item = std::result::Result<Article, ExtrablattError>;
+    type Item = Result<Article, ExtrablattError>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,
@@ -674,7 +674,7 @@ pub struct ExtrablattBuilder {
 }
 
 impl ExtrablattBuilder {
-    pub fn new<T: IntoUrl>(base_url: T) -> std::result::Result<Self, ExtrablattError> {
+    pub fn new<T: IntoUrl>(base_url: T) -> Result<Self, ExtrablattError> {
         Ok(Self {
             base_url: Some(base_url.into_url().map_err(|e| ExtrablattError::UrlParseError { error: e })?),
             config: None,
@@ -708,7 +708,7 @@ impl ExtrablattBuilder {
     pub async fn build_with_extractor<TExtractor: Extractor>(
         self,
         extractor: TExtractor,
-    ) -> std::result::Result<Extrablatt<TExtractor>, ExtrablattError> {
+    ) -> Result<Extrablatt<TExtractor>, ExtrablattError> {
         let base_url = self.base_url.ok_or(ExtrablattError::UrlNotInitialized)?;
         if base_url.cannot_be_a_base() {
             return Err(ExtrablattError::BaseUrlInvalid { url: base_url });
@@ -751,7 +751,7 @@ impl ExtrablattBuilder {
         }
         Ok(paper)
     }
-    pub async fn build(self) -> std::result::Result<Extrablatt, ExtrablattError> {
+    pub async fn build(self) -> Result<Extrablatt, ExtrablattError> {
         self.build_with_extractor(Default::default()).await
     }
 }
@@ -788,8 +788,8 @@ pub enum DocumentDownloadState {
 impl DocumentDownloadState {
     /// Wraps the [`hyper::Response`] into the proper state.
     pub(crate) async fn from_response(
-        response: std::result::Result<Response, reqwest::Error>,
-    ) -> std::result::Result<(Document, Instant), (Self, ExtrablattError)> {
+        response: Result<Response, reqwest::Error>,
+    ) -> Result<(Document, Instant), (Self, ExtrablattError)> {
         match response {
             Ok(response) => {
                 if response.status().is_success() {
@@ -814,7 +814,7 @@ impl DocumentDownloadState {
 
     async fn read_response(
         response: Response,
-    ) -> std::result::Result<(Document, Instant), (DocumentDownloadState, ExtrablattError)> {
+    ) -> Result<(Document, Instant), (DocumentDownloadState, ExtrablattError)> {
         match response.bytes().await {
             Ok(body) => {
                 if let Ok(doc) = Document::from_read(&*body) {
@@ -841,7 +841,7 @@ impl DocumentDownloadState {
     /// [`select::document::Document`] anyway.
     async fn advance_non_http_success(
         err: ExtrablattError,
-    ) -> std::result::Result<(Document, Instant), ExtrablattError> {
+    ) -> Result<(Document, Instant), ExtrablattError> {
         if let ExtrablattError::NoHttpSuccessResponse { response } = err {
             match DocumentDownloadState::read_response(response).await {
                 Ok((doc, received)) => Ok((doc, received)),
