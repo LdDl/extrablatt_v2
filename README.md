@@ -1,11 +1,15 @@
-extrablatt
+extrablatt_v2
+
 =====================
-[![Crates.io](https://img.shields.io/crates/v/extrablatt.svg)](https://crates.io/crates/extrablatt)
-[![Documentation](https://docs.rs/extrablatt/badge.svg)](https://docs.rs/extrablatt)
+[![Crates.io](https://img.shields.io/crates/v/extrablatt_v2.svg)](https://crates.io/crates/extrablatt_v2)
+[![Documentation](https://docs.rs/extrablatt_v2/badge.svg)](https://docs.rs/extrablatt_v2)
+
+This is fork of [an original repository](https://github.com/mattsse/extrablatt) "extrablatt" with some updated dependencies.
 
 Customizable article scraping & curation library and CLI.
 Also runs in Wasm.
 
+Original project kinda supports WASM:
 Basic Wasm example with some CORS limitations: [https://mattsse.github.io/extrablatt/](https://mattsse.github.io/extrablatt/)
 
 
@@ -28,14 +32,14 @@ Customizable for specific news sites/layouts via the `Extractor` trait.
 
 ## Documentation
 
-Full Documentation [https://docs.rs/extrablatt](https://docs.rs/extrablatt)
+Full Documentation [https://docs.rs/extrablatt_v2](https://docs.rs/extrablatt_v2)
 
 ## Example
 
 Extract all Articles from news outlets.
 
 ````rust
-use extrablatt::Extrablatt;
+use extrablatt_v2::Extrablatt;
 use futures::StreamExt;
 
 #[tokio::main]
@@ -62,14 +66,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Install
 
 ```bash
-cargo install extrablatt --features="cli"
+cargo install extrablatt_v2 --features="cli"
 ```
 
 ### Usage 
 
 ```text
 USAGE:
-    extrablatt <SUBCOMMAND>
+    extrablatt_v2 <SUBCOMMAND>
 
 SUBCOMMANDS:
     article     Extract a set of articles
@@ -82,7 +86,7 @@ SUBCOMMANDS:
 ### Extract a set of specific articles and store the result as json
 
 ````bash
-extrablatt article "https://www.example.com/article1.html", "https://www.example.com/article2.html" -o "articles.json"
+extrablatt_v2 article "https://www.example.com/article1.html", "https://www.example.com/article2.html" -o "articles.json"
 ````
 
 ## License
