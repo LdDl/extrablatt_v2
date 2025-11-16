@@ -9,7 +9,7 @@ use regex::Regex;
 use reqwest::Url;
 use select::document::Document;
 use select::node::Node;
-use select::predicate::{Attr, Class, Name, Predicate};
+use select::predicate::{Attr, Name, Predicate};
 use url::Host;
 
 use lazy_static::lazy_static;
@@ -32,6 +32,48 @@ lazy_static! {
     /// This strips leading "By " and also potential profile links.
     static ref RE_AUTHOR_NAME: Regex =
         Regex::new(r"(?mi)(By)?\s*((<|(&lt;))a([^>]*)(>|(&gt;)))?(?P<name>[a-z ,.'-]+)((<|(&lt;))\\/a(>|(&gt;)))?").unwrap();
+}
+
+/// Author extraction constants (from newspaper4k)
+const AUTHOR_ATTRS: [&str; 6] = ["name", "rel", "itemprop", "class", "id", "property"];
+const AUTHOR_VALS: [&str; 12] = [
+    "author", "byline", "dc.creator", "byl", "article:author", "article:author_name",
+    "story-byline", "article-author", "parsely-author", "sailthru.author", "citation_author",
+    "article-author"
+];
+const AUTHOR_STOP_WORDS: [&str; 13] = [
+    "By", "Reuters", "IANS", "AP", "AFP", "PTI", "ANI", "DPA", "Senior Reporter",
+    "Reporter", "Writer", "Opinion Writer", "Opinion Writer"
+];
+
+// Helper functions for author extraction
+fn clean_author(s: &str) -> String {
+    let mut out = s.trim().to_string();
+    for stop in AUTHOR_STOP_WORDS.iter() {
+        out = out.replace(stop, "");
+    }
+    out.trim_matches(|c: char| c == '.' || c == ',' || c == '-' || c == '/' || c.is_whitespace()).to_string()
+}
+
+fn contains_digits(s: &str) -> bool {
+    s.chars().any(|c| c.is_ascii_digit())
+}
+
+fn is_valid_name(s: &str) -> bool {
+    let word_count = s.split_whitespace().count();
+    word_count > 1 && word_count < 5 && !contains_digits(s)
+}
+
+fn parse_byline(s: &str) -> Vec<String> {
+    let s = s.replace(['\n', '\t', '\r', '\u{a0}'], " ");
+    let mut out = Vec::new();
+    for token in s.split(|c| c == '·' || c == ',' || c == '|' || c == '/' || c == '\u{a0}') {
+        let t = token.trim();
+        if is_valid_name(t) {
+            out.push(clean_author(t));
+        }
+    }
+    out
 }
 
 pub(crate) struct NodeValueQuery<'a> {
@@ -158,20 +200,38 @@ pub trait Extractor {
 
     /// Extract all the listed authors for the article.
     fn authors<'a>(&self, doc: &'a Document) -> Vec<Cow<'a, str>> {
-        // look for author data in attributes
-        let mut authors = HashSet::new();
-        for &key in &["name", "rel", "itemprop", "id"] {
-            for &value in &["author", "byline", "dc.creator", "byl"] {
-                for node in doc.find(Attr(key, value).or(Class(value))) {
-                    let txt = author_text(node);
-                    let t = txt.trim();
-                    if t.is_empty() {
-                        continue;
-                    }
-                    if let Some(cap) = RE_AUTHOR_NAME.captures(t) {
-                        if let Some(m) = cap.name("name") {
-                            for author in m.as_str().trim().split(" and ") {
-                                authors.insert(author.to_string());
+        let mut authors = Vec::new();
+
+        for node in doc.nodes.iter() {
+            if let select::node::Data::Element(tag, attrs) = &node.data {
+                let tag_name = tag.local.as_ref().to_lowercase();
+                if tag_name == "script" || tag_name == "style" || tag_name == "time" {
+                    continue;
+                }
+                for (attr_name, attr_value) in attrs.iter() {
+                    let attr_name_str = attr_name.local.as_ref().to_lowercase();
+                    let attr_value_str = attr_value.as_ref().to_lowercase();
+                    for &author_attr in &AUTHOR_ATTRS {
+                        if attr_name_str == author_attr {
+                            for &author_val in &AUTHOR_VALS {
+                                if attr_value_str == author_val || attr_value_str.contains(author_val) {
+                                    let mut content = String::new();
+                                    if tag_name == "meta" {
+                                        if let Some(c) = attrs.iter().find(|(a, _)| a.local.as_ref().eq_ignore_ascii_case("content")) {
+                                            content = c.1.as_ref().to_string();
+                                        }
+                                    }
+                                    if content.is_empty() {
+                                        if let Some(node_ref) = doc.nth(node.index) {
+                                            content = author_text(node_ref);
+                                        }
+                                    }
+                                    for name in parse_byline(&content) {
+                                        if !name.is_empty() {
+                                            authors.push(name);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -179,7 +239,15 @@ pub trait Extractor {
             }
         }
 
-        authors.into_iter().map(Cow::Owned).collect()
+        // Deduplicate and filter
+        let mut result = Vec::new();
+        for author in authors {
+            let a = clean_author(&author);
+            if is_valid_name(&a) && !a.is_empty() && !result.contains(&a) {
+                result.push(a);
+            }
+        }
+        result.into_iter().map(Cow::Owned).collect()
     }
 
     /// When the article was published (and last updated).
