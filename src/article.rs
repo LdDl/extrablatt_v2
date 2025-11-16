@@ -2,7 +2,45 @@ use std::borrow::{Borrow, Cow};
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use std::fmt;
+#[derive(Debug)]
+pub enum ArticleError {
+    UrlNotInitialized,
+    UserAgentParseError,
+    UnsuccessfulRequest(String),
+    DocumentReadError(String),
+    Reqwest(reqwest::Error),
+    Other(String),
+}
+
+impl fmt::Display for ArticleError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ArticleError::UrlNotInitialized => write!(f, "Url of the article must be initialized."),
+            ArticleError::UserAgentParseError => write!(f, "Failed to parse user agent header."),
+            ArticleError::UnsuccessfulRequest(url) => write!(f, "Unsuccessful request to {}", url),
+            ArticleError::DocumentReadError(url) => write!(f, "Failed to read {} html as document.", url),
+            ArticleError::Reqwest(e) => write!(f, "Reqwest error: {}", e),
+            ArticleError::Other(msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
+impl std::error::Error for ArticleError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ArticleError::Reqwest(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<reqwest::Error> for ArticleError {
+    fn from(e: reqwest::Error) -> Self {
+        ArticleError::Reqwest(e)
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 use reqwest::header::{HeaderMap, USER_AGENT};
 use reqwest::{Client, IntoUrl, Url};
@@ -157,11 +195,11 @@ pub struct Article {
 
 impl Article {
     /// Extract the article directly from the doc using the [`DefaultExtractor`]
-    pub fn new<U: IntoUrl, T: AsRef<str>>(url: U, doc: T) -> Result<Article> {
+    pub fn new<U: IntoUrl, T: AsRef<str>>(url: U, doc: T) -> Result<Article, ArticleError> {
         Self::with_extractor(url, doc, &DefaultExtractor::default())
     }
 
-    pub fn with_extractor<U, T, TExtract>(url: U, doc: T, extractor: &TExtract) -> Result<Article>
+    pub fn with_extractor<U, T, TExtract>(url: U, doc: T, extractor: &TExtract) -> Result<Article, ArticleError>
     where
         U: IntoUrl,
         T: AsRef<str>,
@@ -177,7 +215,7 @@ impl Article {
         doc: T,
         extractor: &TExtract,
         language: Language,
-    ) -> Result<Article>
+    ) -> Result<Article, ArticleError>
     where
         U: IntoUrl,
         T: AsRef<str>,
@@ -213,13 +251,13 @@ impl Article {
     ///  #     Ok(())
     ///  # }
     /// ```
-    pub async fn content<T: IntoUrl>(url: T) -> Result<ArticleContent<'static>> {
+    pub async fn content<T: IntoUrl>(url: T) -> Result<ArticleContent<'static>, ArticleError> {
         let article = Self::get(url).await?;
         Ok(article.content)
     }
 
     /// Get the [`Article`] for the `url`
-    pub async fn get<T: IntoUrl>(url: T) -> Result<Article> {
+    pub async fn get<T: IntoUrl>(url: T) -> Result<Article, ArticleError> {
         Self::builder(url)?.get().await
     }
 
@@ -227,14 +265,14 @@ impl Article {
     pub async fn get_with_extractor<T: IntoUrl, TExtract: Extractor>(
         url: T,
         extractor: &TExtract,
-    ) -> Result<Article> {
+    ) -> Result<Article, ArticleError> {
         Self::builder(url)?.get_with_extractor(extractor).await
     }
 
     /// Convenience method for creating a new [`ArticleBuilder`]
     ///
     /// Same as calling [`ArticleBuilder::new`]
-    pub fn builder<T: IntoUrl>(url: T) -> Result<ArticleBuilder> {
+    pub fn builder<T: IntoUrl>(url: T) -> Result<ArticleBuilder, ArticleError> {
         ArticleBuilder::new(url)
     }
 
@@ -269,7 +307,7 @@ pub struct ArticleBuilder {
 }
 
 impl ArticleBuilder {
-    pub fn new<T: IntoUrl>(url: T) -> Result<Self> {
+    pub fn new<T: IntoUrl>(url: T) -> Result<Self, ArticleError> {
         let url = url.into_url()?;
 
         Ok(ArticleBuilder {
@@ -297,7 +335,7 @@ impl ArticleBuilder {
 
     /// Downloads the article and extract it's content using the
     /// [`crate::DefaultExtractor`].
-    pub async fn get(self) -> Result<Article> {
+    pub async fn get(self) -> Result<Article, ArticleError> {
         self.get_with_extractor(&DefaultExtractor::default()).await
     }
 
@@ -306,10 +344,11 @@ impl ArticleBuilder {
     pub async fn get_with_extractor<TExtract: Extractor>(
         self,
         extractor: &TExtract,
-    ) -> Result<Article> {
-        let url = self
-            .url
-            .context("Url of the article must be initialized.")?;
+    ) -> Result<Article, ArticleError> {
+        let url = match self.url {
+            Some(u) => u,
+            None => return Err(ArticleError::UrlNotInitialized),
+        };
 
         #[cfg(target_arch = "wasm32")]
         let builder = Client::builder();
@@ -322,29 +361,28 @@ impl ArticleBuilder {
 
             let mut headers = HeaderMap::with_capacity(1);
 
-            headers.insert(
-                USER_AGENT,
-                self.browser_user_agent
-                    .map(|x| x.parse())
-                    .unwrap_or_else(|| Config::user_agent().parse())
-                    .context("Failed to parse user agent header.")?,
-            );
+            let user_agent = self.browser_user_agent
+                .map(|x| x.parse())
+                .unwrap_or_else(|| Config::user_agent().parse());
+            let user_agent = match user_agent {
+                Ok(ua) => ua,
+                Err(_) => return Err(ArticleError::UserAgentParseError),
+            };
+            headers.insert(USER_AGENT, user_agent);
 
             Client::builder().default_headers(headers).timeout(timeout)
         };
 
-        let resp = builder.build()?.get(url).send().await?;
+        let resp = builder.build()?.get(url).send().await.map_err(ArticleError::Reqwest)?;
 
         if !resp.status().is_success() {
-            // let msg = format!("Unsuccessful request to {:?}", resp.url());
-            // return ExtrablattError::NoHttpSuccessResponse { response: resp
-            // }.context(msg);
-            return Err(anyhow::anyhow!("Unsuccessful request to {:?}", resp.url()));
+            return Err(ArticleError::UnsuccessfulRequest(format!("{:?}", resp.url())));
         }
 
         let url = resp.url().to_owned();
-        let doc = Document::from_read(&*resp.bytes().await?)
-            .context(format!("Failed to read {:?} html as document.", url))?;
+        let bytes = resp.bytes().await.map_err(ArticleError::Reqwest)?;
+        let doc = Document::from_read(&*bytes)
+            .map_err(|_| ArticleError::DocumentReadError(format!("{:?}", url)))?;
 
         let content = extractor
             .article_content(

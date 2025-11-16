@@ -15,10 +15,9 @@ use reqwest::{Client, IntoUrl, Url};
 use select::document::Document;
 use wasm_timer::Instant;
 
-use anyhow::{anyhow, Context, Result};
+use crate::error::ExtrablattError;
 
 use crate::article::{Article, ArticleContent, ArticleUrl, PureArticle};
-use crate::error::ExtrablattError;
 use crate::extract::{DefaultExtractor, Extractor};
 use crate::language::Language;
 use crate::text::ArticleTextNodeExtractor;
@@ -52,7 +51,7 @@ impl Extrablatt<DefaultExtractor> {
     ///
     /// Same as calling [`ExtrablattBuilder::new`].
     #[inline]
-    pub fn builder<T: IntoUrl>(url: T) -> Result<ExtrablattBuilder> {
+    pub fn builder<T: IntoUrl>(url: T) -> std::result::Result<ExtrablattBuilder, ExtrablattError> {
         ExtrablattBuilder::new(url)
     }
 }
@@ -496,7 +495,7 @@ impl ArticleStream<DefaultExtractor> {
     /// #   Ok(())
     /// # }
     /// ```
-    pub async fn new<T: IntoUrl>(url: T) -> Result<ArticleStream<DefaultExtractor>> {
+    pub async fn new<T: IntoUrl>(url: T) -> std::result::Result<ArticleStream<DefaultExtractor>, ExtrablattError> {
         Ok(ArticleStream::new_with_extractor(url, DefaultExtractor).await?)
     }
 }
@@ -508,10 +507,8 @@ impl<TExtractor: Extractor + Unpin> ArticleStream<TExtractor> {
     pub async fn new_with_extractor<T: IntoUrl>(
         url: T,
         extractor: TExtractor,
-    ) -> Result<ArticleStream<TExtractor>> {
-        let paper = ExtrablattBuilder::new(url)?
-            .build_with_extractor(extractor)
-            .await?;
+    ) -> std::result::Result<ArticleStream<TExtractor>, ExtrablattError> {
+        let paper = ExtrablattBuilder::new(url)?.build_with_extractor(extractor).await?;
 
         let article_responses = paper
             .extractor()
@@ -677,9 +674,9 @@ pub struct ExtrablattBuilder {
 }
 
 impl ExtrablattBuilder {
-    pub fn new<T: IntoUrl>(base_url: T) -> Result<Self> {
+    pub fn new<T: IntoUrl>(base_url: T) -> std::result::Result<Self, ExtrablattError> {
         Ok(Self {
-            base_url: Some(base_url.into_url()?),
+            base_url: Some(base_url.into_url().map_err(|e| ExtrablattError::UrlParseError { error: e })?),
             config: None,
             language: None,
             headers: None,
@@ -711,49 +708,31 @@ impl ExtrablattBuilder {
     pub async fn build_with_extractor<TExtractor: Extractor>(
         self,
         extractor: TExtractor,
-    ) -> Result<Extrablatt<TExtractor>> {
-        let base_url = self
-            .base_url
-            .context("Url of the article must be initialized.")?;
-
+    ) -> std::result::Result<Extrablatt<TExtractor>, ExtrablattError> {
+        let base_url = self.base_url.ok_or(ExtrablattError::UrlNotInitialized)?;
         if base_url.cannot_be_a_base() {
-            return Err(anyhow!("url {:?} can not be a base url", base_url));
+            return Err(ExtrablattError::BaseUrlInvalid { url: base_url });
         }
-
         let config = self.config.unwrap_or_default();
-
-        // TODO headers currently not supported in reqwest wasm
         #[cfg(target_arch = "wasm32")]
-        let client = { Client::builder().build()? };
-
+        let client = { Client::builder().build().map_err(ExtrablattError::Reqwest)? };
         #[cfg(not(target_arch = "wasm32"))]
         let client = {
             let mut headers = self.headers.unwrap_or_else(|| HeaderMap::with_capacity(1));
-
             if !headers.contains_key(USER_AGENT) {
                 headers.insert(
                     USER_AGENT,
-                    config.user_agent.parse().context(format!(
-                        "Failed to parse user agent header name: {}",
-                        config.user_agent
-                    ))?,
+                    config.user_agent.parse().map_err(|_| ExtrablattError::UserAgentParseError)?,
                 );
             }
-
             Client::builder()
                 .default_headers(headers)
                 .timeout(config.request_timeout)
-                .build()?
+                .build()
+                .map_err(ExtrablattError::Reqwest)?
         };
-
         let resp = client.get(base_url.clone()).send().await;
-
-        // TODO fix error
-        let (main_page, _) = DocumentDownloadState::from_response(resp)
-            .await
-            .map_err(|_| anyhow!(""))?;
-        // .map_err(|(_, err)| err)?;
-
+        let (main_page, _) = DocumentDownloadState::from_response(resp).await.map_err(|(_, err)| err)?;
         let mut paper = Extrablatt {
             client,
             language: self.language.unwrap_or_default(),
@@ -767,15 +746,12 @@ impl ExtrablattBuilder {
             ),
             config,
         };
-
         if self.categories {
             paper.insert_new_categories();
         }
-
         Ok(paper)
     }
-
-    pub async fn build(self) -> Result<Extrablatt> {
+    pub async fn build(self) -> std::result::Result<Extrablatt, ExtrablattError> {
         self.build_with_extractor(Default::default()).await
     }
 }
