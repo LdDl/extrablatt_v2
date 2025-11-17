@@ -123,6 +123,8 @@ pub use crate::extrablatt::{ArticleStream, Config, Extrablatt, ExtrablattBuilder
 pub use crate::extract::{DefaultExtractor, Extractor};
 pub use crate::language::Language;
 
+pub mod extract_meta;
+pub mod extract_title;
 pub mod article;
 pub mod category;
 pub mod clean;
