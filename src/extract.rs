@@ -5,7 +5,6 @@ use std::ops::Deref;
 
 use std::str::FromStr;
 
-use regex::Regex;
 use reqwest::Url;
 use select::document::Document;
 use select::node::Node;
@@ -20,13 +19,13 @@ use crate::date::{ArticleDate, RE_DATE_SEGMENTS_M_D_Y, RE_DATE_SEGMENTS_Y_M_D};
 
 use crate::category::Category;
 use crate::nlp::CATEGORY_STOPWORDS;
-use crate::text::{ArticleTextNode, ArticleTextNodeExtractor};
 use crate::video::VideoNode;
 use crate::Language;
 use crate::extract_meta::meta_content;
 use crate::extract_title::title;
 use crate::extract_pb_date::publishing_date;
 use crate::extract_authors::authors;
+use crate::extract_node::article_node;
 
 pub(crate) struct NodeValueQuery<'a> {
     pub name: Name<&'a str>,
@@ -286,25 +285,8 @@ pub trait Extractor {
         lang: Language,
         cleaner: T,
     ) -> Option<Cow<'a, str>> {
-        self.article_node(doc, lang)
+        article_node(doc, lang)
             .map(|n| cleaner.clean_node_text(*n).into())
-    }
-
-    /// Detect the [`select::node::Node`] that contains the article's text.
-    ///
-    /// If the `doc`'s body contains a node that matches the
-    /// [`crate::text::ARTICLE_BODY_ATTR`] attribute selectors, this node will
-    /// be selected. Otherwise the article node will be calculated by analysing
-    /// and scoring the textual content of text nodes.
-    fn article_node<'a>(&self, doc: &'a Document, lang: Language) -> Option<ArticleTextNode<'a>> {
-        let mut iter =
-            doc.find(Name("body").descendant(ArticleTextNodeExtractor::article_body_predicate()));
-        if let Some(node) = iter.next() {
-            if iter.next().is_none() {
-                return Some(ArticleTextNode::new(node));
-            }
-        }
-        ArticleTextNodeExtractor::calculate_best_node(doc, lang)
     }
 
     /// Extract the `href` attribute for all `<a>` tags of the document.
@@ -515,7 +497,7 @@ pub trait Extractor {
             lang.unwrap_or_default()
         };
 
-        if let Some(txt_node) = self.article_node(doc, lang) {
+        if let Some(txt_node) = article_node(doc, lang) {
             builder = builder
                 .videos(
                     txt_node
@@ -571,7 +553,7 @@ pub trait Extractor {
 
     /// All video content in the article.
     fn videos<'a>(&self, doc: &'a Document, lang: Option<Language>) -> Vec<VideoNode<'a>> {
-        if let Some(node) = self.article_node(doc, lang.unwrap_or_default()) {
+        if let Some(node) = article_node(doc, lang.unwrap_or_default()) {
             node.videos()
         } else {
             Vec::new()

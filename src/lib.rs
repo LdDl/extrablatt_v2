@@ -127,6 +127,7 @@ pub mod extract_meta;
 pub mod extract_title;
 pub mod extract_pb_date;
 pub mod extract_authors;
+pub mod extract_node;
 pub mod article;
 pub mod category;
 pub mod clean;
