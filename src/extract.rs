@@ -26,6 +26,7 @@ use crate::extract_authors::authors;
 use crate::extract_node::article_node;
 use crate::extract_favicon::favicon;
 use crate::extract_meta_language::meta_language;
+use crate::extract_thumbnail::meta_thumbnail_url;
 
 pub(crate) struct NodeValueQuery<'a> {
     pub name: Name<&'a str>,
@@ -179,12 +180,7 @@ pub trait Extractor {
 
     /// Extract the thumbnail for the article.
     fn meta_thumbnail_url(&self, doc: &Document, base_url: Option<&Url>) -> Option<Url> {
-        let options = Url::options().base_url(base_url);
-        [("name", "thumbnail"), ("name", "thumbnailUrl")]
-            .iter()
-            .filter_map(|(k, v)| self.meta_content(doc, Attr(k, v)))
-            .filter_map(|url| options.parse(&*url).ok())
-            .next()
+        meta_thumbnail_url(doc, base_url)
     }
 
     /// Extract the 'top img' as specified by the website.
