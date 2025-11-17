@@ -25,6 +25,8 @@ use crate::nlp::CATEGORY_STOPWORDS;
 use crate::text::{author_text, ArticleTextNode, ArticleTextNodeExtractor};
 use crate::video::VideoNode;
 use crate::Language;
+use crate::extract_meta::meta_content;
+use crate::extract_title::title;
 
 lazy_static! {
     /// Regex for cleaning author names.
@@ -171,40 +173,22 @@ impl<'a> Deref for MetaNode<'a> {
 /// Used to retrieve all valuable information from a
 /// [`select::document::Document`].
 pub trait Extractor {
-    /// Extract the article title.
+    /// Extract the article title using advanced heuristics.
     ///
-    /// Assumptions:
-    ///    - `og:title` usually contains the plain title, but shortened compared
-    ///      to `<h1>`
-    ///    - `<title>` tag is the most reliable, but often contains also the
-    ///      newspaper name like: "Some title - The New York Times"
-    ///    - `<h1>`, if properly detected, is the best since this is also
-    ///      displayed to users)
-    ///
-    ///    Matching strategy:
-    ///    1.  `<h1>` takes precedent over `og:title`
-    ///    2. `og:title` takes precedent over `<title>`
+    /// Extraction priority:
+    /// 1. Try all known meta tags (TITLE_META_INFO) such as og:title, twitter:title, dc.title, etc.
+    /// 2. If not found, try the longest <h1> element (must be >2 words).
+    /// 3. If not found, try the <title> tag.
+    /// 4. If all above fail, apply advanced heuristics:
+    ///    - Compare filtered versions of <title>, <h1>, and meta tag values (case-insensitive, alphanumeric only)
+    ///    - Prefer <h1> if it matches <title> or meta tag after filtering
+    ///    - If <title> contains <h1> and meta tag, and <h1> is longer, use <h1>
+    ///    - If <title> starts with meta tag, use meta tag
+    ///    - Otherwise, split <title> on common delimiters and pick the best part
+    ///    - Prefer <h1> if final candidate matches after filtering
+    /// 5. Always postprocess the result using MOTLEY_REPLACEMENT and TITLE_REPLACEMENTS for cleanup.
     fn title<'a>(&self, doc: &'a Document) -> Option<Cow<'a, str>> {
-        if let Some(title) = doc
-            .find(Name("h1"))
-            .filter_map(|node| node.as_text().map(str::trim))
-            .next()
-        {
-            return Some(Cow::Borrowed(title));
-        }
-
-        if let Some(title) = self.meta_content(doc, Attr("property", "og:title")) {
-            return Some(title);
-        }
-
-        if let Some(title) = self.meta_content(doc, Attr("name", "og:title")) {
-            return Some(title);
-        }
-
-        if let Some(title) = doc.find(Name("title")).next() {
-            return title.as_text().map(str::trim).map(Cow::Borrowed);
-        }
-        None
+        return title(doc);
     }
 
     /// Extract all the listed authors for the article.
@@ -327,20 +311,14 @@ pub trait Extractor {
             .collect()
     }
 
+
     /// Extract a given meta content form document.
     fn meta_content<'a, 'b>(
         &self,
         doc: &'a Document,
         attr: Attr<&'b str, &'b str>,
     ) -> Option<Cow<'a, str>> {
-        doc.find(Name("head").descendant(Name("meta").and(attr)))
-            .filter_map(|node| {
-                node.attr("content")
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(Cow::Borrowed)
-            })
-            .next()
+        return meta_content(doc, attr);
     }
 
     /// Extract the thumbnail for the article.
