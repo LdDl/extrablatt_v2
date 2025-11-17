@@ -28,6 +28,7 @@ use crate::extract_favicon::favicon;
 use crate::extract_meta_language::meta_language;
 use crate::extract_thumbnail::meta_thumbnail_url;
 use crate::extract_top_img::meta_img_url;
+use crate::extract_urls::all_urls;
 
 pub(crate) struct NodeValueQuery<'a> {
     pub name: Name<&'a str>,
@@ -247,12 +248,7 @@ pub trait Extractor {
 
     /// Extract the `href` attribute for all `<a>` tags of the document.
     fn all_urls<'a>(&self, doc: &'a Document) -> Vec<Cow<'a, str>> {
-        let mut uniques = HashSet::new();
-        doc.find(Name("a"))
-            .filter_map(|n| n.attr("href").map(str::trim))
-            .filter(|href| uniques.insert(*href))
-            .map(Cow::Borrowed)
-            .collect()
+        all_urls(doc)
     }
 
     /// Finds all urls from the document that might point to an article.
