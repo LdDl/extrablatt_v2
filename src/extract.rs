@@ -26,6 +26,7 @@ use crate::extract_title::title;
 use crate::extract_pb_date::publishing_date;
 use crate::extract_authors::authors;
 use crate::extract_node::article_node;
+use crate::extract_favicon::favicon;
 
 pub(crate) struct NodeValueQuery<'a> {
     pub name: Name<&'a str>,
@@ -143,12 +144,7 @@ pub trait Extractor {
 
     /// Extract the favicon from a website.
     fn favicon(&self, doc: &Document, base_url: &Url) -> Option<Url> {
-        let options = Url::options().base_url(Some(base_url));
-
-        doc.find(Name("link").and(Attr("rel", "icon")))
-            .filter_map(|node| node.attr("href"))
-            .filter_map(|href| options.parse(href).ok())
-            .next()
+        favicon(doc, base_url)
     }
 
     /// Finds the href in the `<base>` tag.
