@@ -28,7 +28,7 @@ use crate::extract_favicon::favicon;
 use crate::extract_meta_language::meta_language;
 use crate::extract_thumbnail::meta_thumbnail_url;
 use crate::extract_top_img::meta_img_url;
-use crate::extract_urls::all_urls;
+use crate::extract_urls::{all_urls, image_urls};
 
 pub(crate) struct NodeValueQuery<'a> {
     pub name: Name<&'a str>,
@@ -281,12 +281,7 @@ pub trait Extractor {
 
     /// Extract all of the images of the document.
     fn image_urls(&self, doc: &Document, base_url: Option<&Url>) -> Vec<Url> {
-        let options = Url::options().base_url(base_url);
-        // TODO extract `picture` and source media
-        doc.find(Name("img"))
-            .filter_map(|n| n.attr("href").map(str::trim))
-            .filter_map(|url| options.parse(url).ok())
-            .collect()
+        image_urls(doc, base_url)
     }
 
     /// First, perform basic format and domain checks like making sure the
