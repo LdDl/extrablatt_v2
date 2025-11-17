@@ -125,6 +125,7 @@ pub use crate::language::Language;
 
 pub mod extract_meta;
 pub mod extract_title;
+pub mod extract_pb_date;
 pub mod article;
 pub mod category;
 pub mod clean;
