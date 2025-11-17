@@ -131,6 +131,7 @@ pub mod extract_node;
 pub mod extract_favicon;
 pub mod extract_meta_language;
 pub mod extract_thumbnail;
+pub mod extract_top_img;
 pub mod article;
 pub mod category;
 pub mod clean;

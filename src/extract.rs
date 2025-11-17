@@ -27,6 +27,7 @@ use crate::extract_node::article_node;
 use crate::extract_favicon::favicon;
 use crate::extract_meta_language::meta_language;
 use crate::extract_thumbnail::meta_thumbnail_url;
+use crate::extract_top_img::meta_img_url;
 
 pub(crate) struct NodeValueQuery<'a> {
     pub name: Name<&'a str>,
@@ -185,24 +186,7 @@ pub trait Extractor {
 
     /// Extract the 'top img' as specified by the website.
     fn meta_img_url(&self, doc: &Document, base_url: Option<&Url>) -> Option<Url> {
-        let options = Url::options().base_url(base_url);
-
-        if let Some(meta) = self.meta_content(doc, Attr("property", "og:image")) {
-            if let Ok(url) = options.parse(&*meta) {
-                return Some(url);
-            }
-        }
-
-        doc.find(
-            Name("link").and(
-                Attr("rel", "img_src")
-                    .or(Attr("rel", "image_src"))
-                    .or(Attr("rel", "icon")),
-            ),
-        )
-        .filter_map(|node| node.attr("href"))
-        .filter_map(|href| options.parse(href).ok())
-        .next()
+        meta_img_url(doc, base_url)
     }
 
     /// Returns meta type of article, open graph protocol
