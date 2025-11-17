@@ -3,8 +3,6 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ops::Deref;
 
-use std::str::FromStr;
-
 use reqwest::Url;
 use select::document::Document;
 use select::node::Node;
@@ -27,6 +25,7 @@ use crate::extract_pb_date::publishing_date;
 use crate::extract_authors::authors;
 use crate::extract_node::article_node;
 use crate::extract_favicon::favicon;
+use crate::extract_meta_language::meta_language;
 
 pub(crate) struct NodeValueQuery<'a> {
     pub name: Name<&'a str>,
@@ -157,26 +156,7 @@ pub trait Extractor {
 
     /// Extract content language from meta tag.
     fn meta_language(&self, doc: &Document) -> Option<Language> {
-        let mut unknown_lang = None;
-
-        if let Some(meta) = self.meta_content(doc, Attr("http-equiv", "Content-Language")) {
-            match Language::from_str(&*meta) {
-                Ok(lang) => return Some(lang),
-                Err(lang) => {
-                    unknown_lang = Some(lang);
-                }
-            }
-        }
-
-        if let Some(meta) = self.meta_content(doc, Attr("name", "lang")) {
-            match Language::from_str(&*meta) {
-                Ok(lang) => return Some(lang),
-                Err(lang) => {
-                    unknown_lang = Some(lang);
-                }
-            }
-        }
-        unknown_lang
+        meta_language(doc)
     }
 
     /// Finds all `<meta>` nodes in the document.
