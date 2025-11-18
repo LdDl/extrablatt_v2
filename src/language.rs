@@ -149,9 +149,14 @@ impl Language {
                     (word_count + 1, stopword_count)
                 },
             );
+            let cnt = word_count + stopword_count;
             Some(WordsStats {
                 word_count,
                 stopword_count,
+                avg_word_length: match cnt {
+                    0 => 0.0,
+                    _ => word_count as f64 / cnt as f64,
+                }, 
             })
         } else {
             None

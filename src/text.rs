@@ -88,6 +88,23 @@ impl<'a> TextContainer<'a> for Node<'a> {
             return true;
         }
 
+        // Check for ad containers (structural filtering)
+        if self.attr("data-creative").is_some() {
+            return true;
+        }
+
+        // Check for footer/bottom sections that often contain ads and related content
+        if let Some(class) = self.attr("class") {
+            let class_lower = class.to_lowercase();
+            if class_lower.contains("bottom") ||
+               class_lower.contains("footer") ||
+               class_lower.contains("aside") ||
+               class_lower.contains("related") ||
+               class_lower.contains("recommendation") {
+                return true;
+            }
+        }
+
         // Check for tracking pixels and invisible images
         if Name("img").matches(self) {
             if let Some(style) = self.attr("style") {
@@ -99,7 +116,7 @@ impl<'a> TextContainer<'a> for Node<'a> {
             }
         }
 
-        // Check if node is inside a script, style, or figcaption tag
+        // Check if node is inside a script, style, figcaption, footer, or ad container tag
         let mut current = self.parent();
         while let Some(parent) = current {
             if Name("script").or(Name("style")).or(Name("noscript")).or(Name("figcaption")).or(Name("figure")).matches(&parent) {
@@ -108,6 +125,21 @@ impl<'a> TextContainer<'a> for Node<'a> {
             // Also check for data-image-caption attribute on parents
             if parent.attr("data-image-caption").is_some() {
                 return true;
+            }
+            // Check if parent is an ad container (structural filtering)
+            if parent.attr("data-creative").is_some() {
+                return true;
+            }
+            // Check for footer/bottom sections in parent chain
+            if let Some(class) = parent.attr("class") {
+                let class_lower = class.to_lowercase();
+                if class_lower.contains("bottom") ||
+                   class_lower.contains("footer") ||
+                   class_lower.contains("aside") ||
+                   class_lower.contains("related") ||
+                   class_lower.contains("recommendation") {
+                    return true;
+                }
             }
             current = parent.parent();
         }
@@ -248,6 +280,11 @@ impl<'a> ArticleTextNode<'a> {
                 continue;
             }
 
+            // Structural filtering: skip promotional footer paragraphs
+            if Self::is_promotional_footer(&para) {
+                continue;
+            }
+
             // Use .text() to get all text content from paragraph and its children
             let text = para.text();
             let trimmed = text.trim();
@@ -257,6 +294,29 @@ impl<'a> ArticleTextNode<'a> {
         }
 
         text_parts.join(" ")
+    }
+
+    /// Check if a paragraph is promotional footer content based on link attributes.
+    /// Promotional footers typically only contain links with rel="nofollow" attribute.
+    fn is_promotional_footer(para: &Node) -> bool {
+        let links: Vec<_> = para.find(Name("a")).collect();
+
+        // If there are no links, it's not a promotional footer
+        if links.is_empty() {
+            return false;
+        }
+
+        // Check if ALL links have rel="nofollow" or rel="noopener nofollow"
+        let all_nofollow = links.iter().all(|link| {
+            if let Some(rel) = link.attr("rel") {
+                rel.contains("nofollow")
+            } else {
+                false
+            }
+        });
+
+        // If all links are nofollow, it's likely promotional content
+        all_nofollow
     }
     
     /// Extract text while filtering out noise nodes
