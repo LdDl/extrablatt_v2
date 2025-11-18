@@ -123,13 +123,36 @@ pub struct TextNodeFind<'a> {
 
 impl<'a> TextNodeFind<'a> {
     fn is_text_node(node: &Node<'a>) -> bool {
-        // Focus on elements that typically contain readable content
-        Name("p")
-            .or(Name("div").and(Class("content").or(Class("article")).or(Class("post"))))
-            .or(Name("article"))
-            .or(Name("section"))
-            .or(Name("main"))
-            .matches(node)
+        // Newspaper4k approach: be selective about divs
+        if Name("p").or(Name("pre")).or(Name("td")).or(Name("article")).matches(node) {
+            return true;
+        }
+
+        // For divs, only select those with article-related class/id
+        if Name("div").matches(node) {
+            // Check for article-related classes or IDs
+            if let Some(class) = node.attr("class") {
+                if class.contains("article") ||
+                   class.contains("story") ||
+                   class.contains("paragraph") ||
+                   class.contains("content") ||
+                   class.contains("post") ||
+                   class.contains("entry") {
+                    return true;
+                }
+            }
+            if let Some(id) = node.attr("id") {
+                if id.contains("article") ||
+                   id.contains("story") ||
+                   id.contains("content") {
+                    return true;
+                }
+            }
+            // Don't include generic divs
+            return false;
+        }
+
+        false
     }
 
     fn is_bad(node: &Node<'a>) -> bool {
@@ -218,21 +241,21 @@ impl<'a> ArticleTextNode<'a> {
     /// Extract text while filtering out noise nodes
     fn extract_clean_text(&self) -> String {
         let mut text_parts = Vec::new();
-        
-        // Iterate through all text nodes and filter out noise
-        for node in self.inner.descendants() {
-            if node.is_noise_node() {
+
+        // Newspaper4k-style: extract only from paragraph tags within the selected node
+        for para in self.inner.find(Name("p")) {
+            if para.is_noise_node() {
                 continue;
             }
-            
-            if let Some(text) = node.as_text() {
-                let trimmed = text.trim();
-                if !trimmed.is_empty() && !Self::is_noise_text(trimmed) {
-                    text_parts.push(trimmed.to_string());
-                }
+
+            // Use .text() to get all text content from paragraph and its children
+            let text = para.text();
+            let trimmed = text.trim();
+            if !trimmed.is_empty() && !Self::is_noise_text(trimmed) {
+                text_parts.push(trimmed.to_string());
             }
         }
-        
+
         text_parts.join(" ")
     }
     
@@ -553,20 +576,8 @@ impl ArticleTextNodeExtractor {
     }
 
     pub fn calculate_best_node(doc: &Document, lang: Language) -> Option<ArticleTextNode> {
-        // First, check for multiple article block elements (newspaper-style)
-        let article_blocks: Vec<_> = doc.find(Attr("data-article-block-text", "")).collect();
-        if article_blocks.len() > 1 {
-            // Find the common parent of all article blocks
-            if let Some(first_block) = article_blocks.first() {
-                if let Some(parent) = first_block.parent() {
-                    // Return the parent that contains all article blocks
-                    return Some(ArticleTextNode::with_confidence(parent, 0.98));
-                }
-            }
-        }
-
-        // Try to find explicit article body markers
-        if let Some(article_node) = doc.find(Self::article_body_predicate()).next() {
+        // Try to find explicit article body markers (only for itemprop="articleBody")
+        if let Some(article_node) = doc.find(Attr("itemprop", "articleBody")).next() {
             return Some(ArticleTextNode::with_confidence(article_node, 0.95));
         }
 
@@ -580,13 +591,13 @@ impl ArticleTextNodeExtractor {
             })
             .filter(|n| n.text_content_length() >= Self::MIN_TEXT_LENGTH)
             .filter_map(|node| {
-                if let Some(text) = node.as_text() {
-                    if !ArticleTextNode::is_noise_text(text) {
-                        if let Some(stats) = lang.stopword_count(text) {
-                            if stats.stopword_count >= Self::MINIMUM_STOPWORD_COUNT {
-                                let score = Self::calculate_node_score(&node, stats.stopword_count);
-                                return Some((node, stats, score));
-                            }
+                // Use .text() to get all text content from element and its children
+                let text = node.text();
+                if !text.trim().is_empty() && !ArticleTextNode::is_noise_text(&text) {
+                    if let Some(stats) = lang.stopword_count(&text) {
+                        if stats.stopword_count >= Self::MINIMUM_STOPWORD_COUNT {
+                            let score = Self::calculate_node_score(&node, stats.stopword_count);
+                            return Some((node, stats, score));
                         }
                     }
                 }
@@ -652,20 +663,13 @@ impl ArticleTextNodeExtractor {
         // Newspaper4k-style semantic HTML bonuses with high scores
         let mut semantic_bonus = 0;
 
-        // Check for data-article-block-text attribute (individual article paragraphs)
-        if node.attr("data-article-block-text").is_some() {
-            semantic_bonus = 50; // High boost for article block elements
-        }
-
         // Check for itemprop attributes (highest priority)
-        if semantic_bonus == 0 {
-            if let Some(itemprop) = node.attr("itemprop") {
-                semantic_bonus = match itemprop {
-                    "articleBody" => 100, // Newspaper4k gives this massive boost!
-                    "articleText" => 40,
-                    _ => 0,
-                };
-            }
+        if let Some(itemprop) = node.attr("itemprop") {
+            semantic_bonus = match itemprop {
+                "articleBody" => 100, // Newspaper4k gives this massive boost!
+                "articleText" => 40,
+                _ => 0,
+            };
         }
 
         // Check for itemtype (Schema.org)
