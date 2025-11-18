@@ -96,10 +96,13 @@ impl<'a> TextContainer<'a> for Node<'a> {
         // Check for footer/bottom sections that often contain ads and related content
         if let Some(class) = self.attr("class") {
             let class_lower = class.to_lowercase();
-            if class_lower.contains("bottom") ||
+            // Be specific to avoid false positives - check for clear footer/bottom patterns
+            if class_lower.contains("articlebottom") ||
+               class_lower.contains("article-bottom") ||
                class_lower.contains("footer") ||
-               class_lower.contains("aside") ||
-               class_lower.contains("related") ||
+               class_lower.contains("sidebar") ||
+               class_lower.contains("widget") ||
+               class_lower.contains("related-") ||
                class_lower.contains("recommendation") {
                 return true;
             }
@@ -133,10 +136,13 @@ impl<'a> TextContainer<'a> for Node<'a> {
             // Check for footer/bottom sections in parent chain
             if let Some(class) = parent.attr("class") {
                 let class_lower = class.to_lowercase();
-                if class_lower.contains("bottom") ||
+                // Be specific to avoid false positives - check for clear footer/bottom patterns
+                if class_lower.contains("articlebottom") ||
+                   class_lower.contains("article-bottom") ||
                    class_lower.contains("footer") ||
-                   class_lower.contains("aside") ||
-                   class_lower.contains("related") ||
+                   class_lower.contains("sidebar") ||
+                   class_lower.contains("widget") ||
+                   class_lower.contains("related-") ||
                    class_lower.contains("recommendation") {
                     return true;
                 }

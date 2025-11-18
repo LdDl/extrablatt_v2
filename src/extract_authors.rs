@@ -26,6 +26,32 @@ lazy_static! {
         Regex::new(r"(?mi)(By)?\s*((<|(&lt;))a([^>]*)(>|(&gt;)))?(?P<name>[a-z ,.'-]+)((<|(&lt;))\\/a(>|(&gt;)))?").unwrap();
 }
 
+/// Check if a node is inside a footer/bottom section by examining its parents
+fn is_in_footer_section(doc: &Document, node_index: usize) -> bool {
+    if let Some(node) = doc.nth(node_index) {
+        let mut current = Some(node);
+        while let Some(n) = current {
+            if let Some(class) = n.attr("class") {
+                let class_lower = class.to_lowercase();
+                // Skip authors from footer, bottom sections, sidebars, widgets, and opinion blocks
+                if class_lower.contains("articlebottom") ||
+                   class_lower.contains("article-bottom") ||
+                   class_lower.contains("footer") ||
+                   class_lower.contains("sidebar") ||
+                   class_lower.contains("widget") ||
+                   class_lower.contains("related-") ||
+                   class_lower.contains("recommendation") ||
+                   class_lower.contains("block-opinions") ||
+                   class_lower.contains("draggable") {
+                    return true;
+                }
+            }
+            current = n.parent();
+        }
+    }
+    false
+}
+
 /// Extract all the listed authors for the article.
 pub fn authors<'a>(doc: &'a Document) -> Vec<Cow<'a, str>> {
     let mut authors = Vec::new();
@@ -33,9 +59,16 @@ pub fn authors<'a>(doc: &'a Document) -> Vec<Cow<'a, str>> {
     for node in doc.nodes.iter() {
         if let select::node::Data::Element(tag, attrs) = &node.data {
             let tag_name = tag.local.as_ref().to_lowercase();
-            if tag_name == "script" || tag_name == "style" || tag_name == "time" {
+            // Skip script, style, time, and figcaption tags (figcaption often contains photo credits, not article authors)
+            if tag_name == "script" || tag_name == "style" || tag_name == "time" || tag_name == "figcaption" {
                 continue;
             }
+
+            // Skip nodes in footer/bottom sections (opinion authors, etc.)
+            if is_in_footer_section(doc, node.index) {
+                continue;
+            }
+
             for (attr_name, attr_value) in attrs.iter() {
                 let attr_name_str = attr_name.local.as_ref().to_lowercase();
                 let attr_value_str = attr_value.as_ref().to_lowercase();
@@ -100,7 +133,9 @@ fn contains_digits(s: &str) -> bool {
 
 fn is_valid_name(s: &str) -> bool {
     let word_count = s.split_whitespace().count();
-    word_count > 1 && word_count < 5 && !contains_digits(s) && !s.contains('<') && !s.contains('>')
+    // Allow up to 10 words to handle cases where job titles are included
+    // The parse_byline function will trim to first 2 words anyway
+    word_count > 1 && word_count < 10 && !contains_digits(s) && !s.contains('<') && !s.contains('>')
 }
 
 fn parse_byline(s: &str) -> Vec<String> {
@@ -108,14 +143,18 @@ fn parse_byline(s: &str) -> Vec<String> {
     let mut out = Vec::new();
     for token in s.split(|c| c == '·' || c == ',' || c == '|' || c == '/' || c == '\u{a0}') {
         let t = token.trim();
-        if is_valid_name(t) {
-            // If more than 2 words, keep only first two (to avoid picking up extra words after name)
-            let words: Vec<&str> = t.split_whitespace().collect();
-            let name = if words.len() > 2 {
-                words[..2].join(" ")
-            } else {
-                t.to_string()
-            };
+        // Extract first 2 words first (to handle cases like "Name Surname job title company.com")
+        let words: Vec<&str> = t.split_whitespace().collect();
+        if words.len() < 2 {
+            continue;  // Need at least 2 words for a name
+        }
+        let name = if words.len() > 2 {
+            words[..2].join(" ")
+        } else {
+            t.to_string()
+        };
+        // Now validate the extracted name (not the full string)
+        if is_valid_name(&name) {
             out.push(clean_author(&name));
         }
     }
