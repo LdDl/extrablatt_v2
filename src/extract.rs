@@ -143,6 +143,13 @@ pub trait Extractor {
         [("property", "description"), ("name", "description")]
             .iter()
             .filter_map(|(k, v)| self.meta_content(doc, Attr(k, v)))
+            .map(|desc| {
+                // Clean non-breaking spaces from description
+                match desc {
+                    Cow::Borrowed(s) => Cow::Owned(s.replace('\u{a0}', " ")),
+                    Cow::Owned(s) => Cow::Owned(s.replace('\u{a0}', " "))
+                }
+            })
             .next()
     }
 
