@@ -23,6 +23,14 @@ lazy_static! {
 
     pub(crate) static ref RE_KEY_VALUE_MODIFIED_DATE: Regex = Regex::new(r#"(?mi)"\s*(([^"]|\w)*)?((date[\s_-]?modified|modified[\s_-]?date))\s*"\s*[:=]\s*"\s*(?P<date>[^"]*)\s*""#).unwrap();
 
+    static ref TZINFO: HashMap<String, i32> = {
+        let mut map = HashMap::new();
+        map.insert("ET".to_string(), 14400);
+        map
+    };
+
+    static ref DATE_PARSER: dtparse::Parser = dtparse::Parser::default();
+
     /// Common nodes that hold the article's modification date.
     pub(crate) static ref  MODIFIED_DATE_NODES: Vec<NodeValueQuery<'static>> = {
             let mut nodes = Vec::with_capacity(8);
@@ -168,14 +176,11 @@ impl DateExtractor {
     }
 
     fn fuzzy_dtparse(s: &str) -> Option<NaiveDateTime> {
-        let mut tzinfod = HashMap::new();
-        tzinfod.insert("ET".to_string(), 14400);
-        let parser = dtparse::Parser::default();
-        parser
+        DATE_PARSER
             .parse(
                 s, None, None, true, /* turns on fuzzy mode */
                 true, /* gives us the tokens that weren't recognized */
-                None, false, &tzinfod,
+                None, false, &TZINFO,
             )
             .map(|(date, _, _)| date)
             .ok()

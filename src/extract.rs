@@ -1,89 +1,35 @@
 use std::borrow::Cow;
-
 use std::collections::HashSet;
-use std::ops::Deref;
 
-use std::str::FromStr;
-
-use regex::Regex;
 use reqwest::Url;
 use select::document::Document;
-use select::node::Node;
-use select::predicate::{Attr, Name, Predicate};
+use select::predicate::{Attr, Name};
 use url::Host;
-
-use lazy_static::lazy_static;
 
 use crate::article::{
     ArticleContent, ArticleUrl, ALLOWED_FILE_EXT, BAD_DOMAINS, BAD_SEGMENTS, GOOD_SEGMENTS,
 };
 use crate::clean::{DefaultDocumentCleaner, DocumentCleaner};
-use crate::date::{ArticleDate, DateExtractor, RE_DATE_SEGMENTS_M_D_Y, RE_DATE_SEGMENTS_Y_M_D};
+use crate::date::{ArticleDate, RE_DATE_SEGMENTS_M_D_Y, RE_DATE_SEGMENTS_Y_M_D};
 
 use crate::category::Category;
 use crate::nlp::CATEGORY_STOPWORDS;
-use crate::text::{author_text, ArticleTextNode, ArticleTextNodeExtractor};
 use crate::video::VideoNode;
 use crate::Language;
-
-lazy_static! {
-    /// Regex for cleaning author names.
-    ///
-    /// This strips leading "By " and also potential profile links.
-    static ref RE_AUTHOR_NAME: Regex =
-        Regex::new(r"(?mi)(By)?\s*((<|(&lt;))a([^>]*)(>|(&gt;)))?(?P<name>[a-z ,.'-]+)((<|(&lt;))\\/a(>|(&gt;)))?").unwrap();
-}
-
-/// Author extraction constants (from newspaper4k)
-const AUTHOR_ATTRS: [&str; 6] = ["name", "rel", "itemprop", "class", "id", "property"];
-const AUTHOR_VALS: [&str; 12] = [
-    "author", "byline", "dc.creator", "byl", "article:author", "article:author_name",
-    "story-byline", "article-author", "parsely-author", "sailthru.author", "citation_author",
-    "article-author"
-];
-const AUTHOR_STOP_WORDS: [&str; 13] = [
-    "By", "Reuters", "IANS", "AP", "AFP", "PTI", "ANI", "DPA", "Senior Reporter",
-    "Reporter", "Writer", "Opinion Writer", "Opinion Writer"
-];
-
-// Helper functions for author extraction
-fn clean_author(s: &str) -> String {
-    let mut out = s.trim().to_string();
-    for stop in AUTHOR_STOP_WORDS.iter() {
-        out = out.replace(stop, "");
-    }
-    // Remove HTML tags
-    out = Regex::new(r"<[^>]+>").unwrap().replace_all(&out, "").to_string();
-    out.trim_matches(|c: char| c == '.' || c == ',' || c == '-' || c == '/' || c.is_whitespace()).to_string()
-}
-
-fn contains_digits(s: &str) -> bool {
-    s.chars().any(|c| c.is_ascii_digit())
-}
-
-fn is_valid_name(s: &str) -> bool {
-    let word_count = s.split_whitespace().count();
-    word_count > 1 && word_count < 5 && !contains_digits(s) && !s.contains('<') && !s.contains('>')
-}
-
-fn parse_byline(s: &str) -> Vec<String> {
-    let s = s.replace(['\n', '\t', '\r', '\u{a0}'], " ");
-    let mut out = Vec::new();
-    for token in s.split(|c| c == '·' || c == ',' || c == '|' || c == '/' || c == '\u{a0}') {
-        let t = token.trim();
-        if is_valid_name(t) {
-            // If more than 2 words, keep only first two (to avoid picking up extra words after name)
-            let words: Vec<&str> = t.split_whitespace().collect();
-            let name = if words.len() > 2 {
-                words[..2].join(" ")
-            } else {
-                t.to_string()
-            };
-            out.push(clean_author(&name));
-        }
-    }
-    out
-}
+use crate::extract_meta::meta_content;
+use crate::extract_title::title;
+use crate::extract_pb_date::publishing_date;
+use crate::extract_authors::authors;
+use crate::extract_node::article_node;
+use crate::extract_favicon::favicon;
+use crate::extract_meta_language::meta_language;
+use crate::extract_thumbnail::meta_thumbnail_url;
+use crate::extract_top_img::meta_img_url;
+use crate::extract_urls::{all_urls, image_urls};
+use crate::extract_base_url::base_url;
+use crate::extract_meta_data::meta_data;
+use crate::extract_canonical::canonical_link;
+use crate::extract_videos::videos;
 
 pub(crate) struct NodeValueQuery<'a> {
     pub name: Name<&'a str>,
@@ -108,224 +54,60 @@ impl<'a> NodeValueQuery<'a> {
     }
 }
 
-/// Represents `<meta>` [`select::node::Node`] in a
-/// [`select::document::Document`].
-pub struct MetaNode<'a> {
-    inner: Node<'a>,
-}
-
-impl<'a> MetaNode<'a> {
-    pub fn attr<'b>(&'a self, attr: &'b str) -> Option<&'a str> {
-        self.inner.attr(attr)
-    }
-
-    /// Value of the `name` attribute in the node.
-    pub fn name_attr(&self) -> Option<&str> {
-        self.attr("name")
-    }
-
-    /// Value of the `property` attribute in the node.
-    pub fn property_attr(&self) -> Option<&str> {
-        self.attr("property")
-    }
-
-    /// Value of the `content` attribute in the node.
-    pub fn content_attr(&self) -> Option<&str> {
-        self.attr("content")
-    }
-
-    /// Value of the `value` attribute in the node.
-    pub fn value_attr(&self) -> Option<&str> {
-        self.attr("value")
-    }
-
-    pub fn key(&self) -> Option<&str> {
-        if let Some(prop) = self.property_attr() {
-            Some(prop)
-        } else {
-            self.name_attr()
-        }
-    }
-
-    pub fn value(&self) -> Option<&str> {
-        if let Some(c) = self.content_attr() {
-            Some(c)
-        } else {
-            self.value_attr()
-        }
-    }
-
-    pub fn is_key_value(&self) -> bool {
-        self.key().is_some() && self.value().is_some()
-    }
-}
-
-impl<'a> Deref for MetaNode<'a> {
-    type Target = Node<'a>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
+// Re-export MetaNode from extract_meta_data module
+pub use crate::extract_meta_data::MetaNode;
 
 /// Used to retrieve all valuable information from a
 /// [`select::document::Document`].
 pub trait Extractor {
-    /// Extract the article title.
+    /// Extract the article title using advanced heuristics.
     ///
-    /// Assumptions:
-    ///    - `og:title` usually contains the plain title, but shortened compared
-    ///      to `<h1>`
-    ///    - `<title>` tag is the most reliable, but often contains also the
-    ///      newspaper name like: "Some title - The New York Times"
-    ///    - `<h1>`, if properly detected, is the best since this is also
-    ///      displayed to users)
-    ///
-    ///    Matching strategy:
-    ///    1.  `<h1>` takes precedent over `og:title`
-    ///    2. `og:title` takes precedent over `<title>`
+    /// Extraction priority:
+    /// 1. Try all known meta tags (TITLE_META_INFO) such as og:title, twitter:title, dc.title, etc.
+    /// 2. If not found, try the longest <h1> element (must be >2 words).
+    /// 3. If not found, try the <title> tag.
+    /// 4. If all above fail, apply advanced heuristics:
+    ///    - Compare filtered versions of <title>, <h1>, and meta tag values (case-insensitive, alphanumeric only)
+    ///    - Prefer <h1> if it matches <title> or meta tag after filtering
+    ///    - If <title> contains <h1> and meta tag, and <h1> is longer, use <h1>
+    ///    - If <title> starts with meta tag, use meta tag
+    ///    - Otherwise, split <title> on common delimiters and pick the best part
+    ///    - Prefer <h1> if final candidate matches after filtering
+    /// 5. Always postprocess the result using MOTLEY_REPLACEMENT and TITLE_REPLACEMENTS for cleanup.
     fn title<'a>(&self, doc: &'a Document) -> Option<Cow<'a, str>> {
-        if let Some(title) = doc
-            .find(Name("h1"))
-            .filter_map(|node| node.as_text().map(str::trim))
-            .next()
-        {
-            return Some(Cow::Borrowed(title));
-        }
-
-        if let Some(title) = self.meta_content(doc, Attr("property", "og:title")) {
-            return Some(title);
-        }
-
-        if let Some(title) = self.meta_content(doc, Attr("name", "og:title")) {
-            return Some(title);
-        }
-
-        if let Some(title) = doc.find(Name("title")).next() {
-            return title.as_text().map(str::trim).map(Cow::Borrowed);
-        }
-        None
+        return title(doc);
     }
 
     /// Extract all the listed authors for the article.
     fn authors<'a>(&self, doc: &'a Document) -> Vec<Cow<'a, str>> {
-        let mut authors = Vec::new();
-
-        for node in doc.nodes.iter() {
-            if let select::node::Data::Element(tag, attrs) = &node.data {
-                let tag_name = tag.local.as_ref().to_lowercase();
-                if tag_name == "script" || tag_name == "style" || tag_name == "time" {
-                    continue;
-                }
-                for (attr_name, attr_value) in attrs.iter() {
-                    let attr_name_str = attr_name.local.as_ref().to_lowercase();
-                    let attr_value_str = attr_value.as_ref().to_lowercase();
-                    for &author_attr in &AUTHOR_ATTRS {
-                        if attr_name_str == author_attr {
-                            for &author_val in &AUTHOR_VALS {
-                                if attr_value_str == author_val || attr_value_str.contains(author_val) {
-                                    let mut content = String::new();
-                                    if tag_name == "meta" {
-                                        if let Some(c) = attrs.iter().find(|(a, _)| a.local.as_ref().eq_ignore_ascii_case("content")) {
-                                            content = c.1.as_ref().to_string();
-                                        }
-                                    }
-                                    if content.is_empty() {
-                                        if let Some(node_ref) = doc.nth(node.index) {
-                                            content = author_text(node_ref);
-                                        }
-                                    }
-                                    for name in parse_byline(&content) {
-                                        if !name.is_empty() {
-                                            authors.push(name);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Deduplicate and filter (case-insensitive, trimmed)
-        let mut seen = HashSet::new();
-        let mut result = Vec::new();
-        for author in authors {
-            let a = clean_author(&author);
-            let key = a.to_lowercase();
-            if is_valid_name(&a) && !a.is_empty() && !seen.contains(&key) {
-                seen.insert(key);
-                result.push(a);
-            }
-        }
-        // Sort authors alphabetically for deterministic output
-        result.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
-        result.into_iter().map(Cow::Owned).collect()
+        return authors(doc);
     }
 
     /// When the article was published (and last updated).
     fn publishing_date(&self, doc: &Document, base_url: Option<&Url>) -> Option<ArticleDate> {
-        if let Some(date) = DateExtractor::extract_from_doc(doc) {
-            return Some(date);
-        }
-
-        if let Some(url) = base_url {
-            return DateExtractor::extract_from_str(url.path());
-        }
-
-        None
+        return publishing_date(doc, base_url);
     }
 
     /// Extract the favicon from a website.
     fn favicon(&self, doc: &Document, base_url: &Url) -> Option<Url> {
-        let options = Url::options().base_url(Some(base_url));
-
-        doc.find(Name("link").and(Attr("rel", "icon")))
-            .filter_map(|node| node.attr("href"))
-            .filter_map(|href| options.parse(href).ok())
-            .next()
+        favicon(doc, base_url)
     }
 
     /// Finds the href in the `<base>` tag.
     fn base_url(&self, doc: &Document) -> Option<Url> {
-        doc.find(Name("base"))
-            .filter_map(|n| n.attr("href"))
-            .filter_map(|href| Url::parse(href).ok())
-            .next()
+        base_url(doc)
     }
 
     /// Extract content language from meta tag.
     fn meta_language(&self, doc: &Document) -> Option<Language> {
-        let mut unknown_lang = None;
-
-        if let Some(meta) = self.meta_content(doc, Attr("http-equiv", "Content-Language")) {
-            match Language::from_str(&*meta) {
-                Ok(lang) => return Some(lang),
-                Err(lang) => {
-                    unknown_lang = Some(lang);
-                }
-            }
-        }
-
-        if let Some(meta) = self.meta_content(doc, Attr("name", "lang")) {
-            match Language::from_str(&*meta) {
-                Ok(lang) => return Some(lang),
-                Err(lang) => {
-                    unknown_lang = Some(lang);
-                }
-            }
-        }
-        unknown_lang
+        meta_language(doc)
     }
 
     /// Finds all `<meta>` nodes in the document.
     fn meta_data<'a>(&self, doc: &'a Document) -> Vec<MetaNode<'a>> {
-        doc.find(Name("head").descendant(Name("meta")))
-            .map(|node| MetaNode { inner: node })
-            .filter(MetaNode::is_key_value)
-            .collect()
+        meta_data(doc)
     }
+
 
     /// Extract a given meta content form document.
     fn meta_content<'a, 'b>(
@@ -333,46 +115,17 @@ pub trait Extractor {
         doc: &'a Document,
         attr: Attr<&'b str, &'b str>,
     ) -> Option<Cow<'a, str>> {
-        doc.find(Name("head").descendant(Name("meta").and(attr)))
-            .filter_map(|node| {
-                node.attr("content")
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(Cow::Borrowed)
-            })
-            .next()
+        return meta_content(doc, attr);
     }
 
     /// Extract the thumbnail for the article.
     fn meta_thumbnail_url(&self, doc: &Document, base_url: Option<&Url>) -> Option<Url> {
-        let options = Url::options().base_url(base_url);
-        [("name", "thumbnail"), ("name", "thumbnailUrl")]
-            .iter()
-            .filter_map(|(k, v)| self.meta_content(doc, Attr(k, v)))
-            .filter_map(|url| options.parse(&*url).ok())
-            .next()
+        meta_thumbnail_url(doc, base_url)
     }
 
     /// Extract the 'top img' as specified by the website.
     fn meta_img_url(&self, doc: &Document, base_url: Option<&Url>) -> Option<Url> {
-        let options = Url::options().base_url(base_url);
-
-        if let Some(meta) = self.meta_content(doc, Attr("property", "og:image")) {
-            if let Ok(url) = options.parse(&*meta) {
-                return Some(url);
-            }
-        }
-
-        doc.find(
-            Name("link").and(
-                Attr("rel", "img_src")
-                    .or(Attr("rel", "image_src"))
-                    .or(Attr("rel", "icon")),
-            ),
-        )
-        .filter_map(|node| node.attr("href"))
-        .filter_map(|href| options.parse(href).ok())
-        .next()
+        meta_img_url(doc, base_url)
     }
 
     /// Returns meta type of article, open graph protocol
@@ -427,35 +180,13 @@ pub trait Extractor {
         lang: Language,
         cleaner: T,
     ) -> Option<Cow<'a, str>> {
-        self.article_node(doc, lang)
+        article_node(doc, lang)
             .map(|n| cleaner.clean_node_text(*n).into())
-    }
-
-    /// Detect the [`select::node::Node`] that contains the article's text.
-    ///
-    /// If the `doc`'s body contains a node that matches the
-    /// [`crate::text::ARTICLE_BODY_ATTR`] attribute selectors, this node will
-    /// be selected. Otherwise the article node will be calculated by analysing
-    /// and scoring the textual content of text nodes.
-    fn article_node<'a>(&self, doc: &'a Document, lang: Language) -> Option<ArticleTextNode<'a>> {
-        let mut iter =
-            doc.find(Name("body").descendant(ArticleTextNodeExtractor::article_body_predicate()));
-        if let Some(node) = iter.next() {
-            if iter.next().is_none() {
-                return Some(ArticleTextNode::new(node));
-            }
-        }
-        ArticleTextNodeExtractor::calculate_best_node(doc, lang)
     }
 
     /// Extract the `href` attribute for all `<a>` tags of the document.
     fn all_urls<'a>(&self, doc: &'a Document) -> Vec<Cow<'a, str>> {
-        let mut uniques = HashSet::new();
-        doc.find(Name("a"))
-            .filter_map(|n| n.attr("href").map(str::trim))
-            .filter(|href| uniques.insert(*href))
-            .map(Cow::Borrowed)
-            .collect()
+        all_urls(doc)
     }
 
     /// Finds all urls from the document that might point to an article.
@@ -488,12 +219,7 @@ pub trait Extractor {
 
     /// Extract all of the images of the document.
     fn image_urls(&self, doc: &Document, base_url: Option<&Url>) -> Vec<Url> {
-        let options = Url::options().base_url(base_url);
-        // TODO extract `picture` and source media
-        doc.find(Name("img"))
-            .filter_map(|n| n.attr("href").map(str::trim))
-            .filter_map(|url| options.parse(url).ok())
-            .collect()
+        image_urls(doc, base_url)
     }
 
     /// First, perform basic format and domain checks like making sure the
@@ -656,7 +382,7 @@ pub trait Extractor {
             lang.unwrap_or_default()
         };
 
-        if let Some(txt_node) = self.article_node(doc, lang) {
+        if let Some(txt_node) = article_node(doc, lang) {
             builder = builder
                 .videos(
                     txt_node
@@ -695,28 +421,12 @@ pub trait Extractor {
     ///   1. The rel=canonical tag
     ///   2. The og:url tag
     fn canonical_link(&self, doc: &Document) -> Option<Url> {
-        if let Some(link) = doc
-            .find(Name("link").and(Attr("rel", "canonical")))
-            .filter_map(|node| node.attr("href"))
-            .next()
-        {
-            return Url::parse(link).ok();
-        }
-
-        if let Some(meta) = self.meta_content(doc, Attr("property", "og:url")) {
-            return Url::parse(&*meta).ok();
-        }
-
-        None
+        canonical_link(doc)
     }
 
     /// All video content in the article.
     fn videos<'a>(&self, doc: &'a Document, lang: Option<Language>) -> Vec<VideoNode<'a>> {
-        if let Some(node) = self.article_node(doc, lang.unwrap_or_default()) {
-            node.videos()
-        } else {
-            Vec::new()
-        }
+        videos(doc, lang)
     }
 }
 
@@ -773,44 +483,6 @@ impl Extractor for DefaultExtractor {}
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn author_regex() {
-        let m = RE_AUTHOR_NAME
-            .captures("By &lt;a href=&quot;/profiles/meg-wagner&quot;&gt;Joseph Kelley&lt;/a&gt;")
-            .unwrap()
-            .name("name")
-            .unwrap();
-        assert_eq!(m.as_str(), "Joseph Kelley");
-
-        let m = RE_AUTHOR_NAME
-            .captures("By <a href=&quot;/profiles/meg-wagner&quot;>Joseph Kelley</a>")
-            .unwrap()
-            .name("name")
-            .unwrap();
-        assert_eq!(m.as_str(), "Joseph Kelley");
-
-        let m = RE_AUTHOR_NAME
-            .captures("Joseph Kelley")
-            .unwrap()
-            .name("name")
-            .unwrap();
-        assert_eq!(m.as_str(), "Joseph Kelley");
-
-        let m = RE_AUTHOR_NAME
-            .captures("By Joseph Kelley")
-            .unwrap()
-            .name("name")
-            .unwrap();
-        assert_eq!(m.as_str(), "Joseph Kelley");
-
-        let m = RE_AUTHOR_NAME
-            .captures("J\'oseph-Kelley")
-            .unwrap()
-            .name("name")
-            .unwrap();
-        assert_eq!(m.as_str(), "J\'oseph-Kelley");
-    }
 
     #[test]
     fn detect_articles() {
