@@ -24,6 +24,9 @@ lazy_static! {
     /// This strips leading "By " and also potential profile links.
     static ref RE_AUTHOR_NAME: Regex =
         Regex::new(r"(?mi)(By)?\s*((<|(&lt;))a([^>]*)(>|(&gt;)))?(?P<name>[a-z ,.'-]+)((<|(&lt;))\\/a(>|(&gt;)))?").unwrap();
+
+    /// Regex for removing HTML tags in clean_author
+    static ref RE_HTML_TAGS: Regex = Regex::new(r"<[^>]+>").unwrap();
 }
 
 /// Check if a node is inside a footer/bottom section by examining its parents
@@ -64,10 +67,9 @@ pub fn authors<'a>(doc: &'a Document) -> Vec<Cow<'a, str>> {
                 continue;
             }
 
-            // Skip nodes in footer/bottom sections (opinion authors, etc.)
-            if is_in_footer_section(doc, node.index) {
-                continue;
-            }
+            // Check for author attributes first, THEN check footer (to avoid expensive DOM traversal)
+            let mut found_author = false;
+            let mut collected_names = Vec::new();
 
             for (attr_name, attr_value) in attrs.iter() {
                 let attr_name_str = attr_name.local.as_ref().to_lowercase();
@@ -76,6 +78,7 @@ pub fn authors<'a>(doc: &'a Document) -> Vec<Cow<'a, str>> {
                     if attr_name_str == author_attr {
                         for &author_val in &AUTHOR_VALS {
                             if attr_value_str == author_val || attr_value_str.contains(author_val) {
+                                found_author = true;
                                 let mut content = String::new();
                                 if tag_name == "meta" {
                                     if let Some(c) = attrs.iter().find(|(a, _)| a.local.as_ref().eq_ignore_ascii_case("content")) {
@@ -89,13 +92,18 @@ pub fn authors<'a>(doc: &'a Document) -> Vec<Cow<'a, str>> {
                                 }
                                 for name in parse_byline(&content) {
                                     if !name.is_empty() {
-                                        authors.push(name);
+                                        collected_names.push(name);
                                     }
                                 }
                             }
                         }
                     }
                 }
+            }
+
+            // Only check footer section if we actually found author attributes (big performance win!)
+            if found_author && !is_in_footer_section(doc, node.index) {
+                authors.extend(collected_names);
             }
         }
     }
@@ -122,8 +130,8 @@ fn clean_author(s: &str) -> String {
     for stop in AUTHOR_STOP_WORDS.iter() {
         out = out.replace(stop, "");
     }
-    // Remove HTML tags
-    out = Regex::new(r"<[^>]+>").unwrap().replace_all(&out, "").to_string();
+    // Remove HTML tags using cached regex
+    out = RE_HTML_TAGS.replace_all(&out, "").to_string();
     out.trim_matches(|c: char| c == '.' || c == ',' || c == '-' || c == '/' || c.is_whitespace()).to_string()
 }
 

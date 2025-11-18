@@ -651,20 +651,33 @@ impl ArticleTextNodeExtractor {
 
         let txt_nodes: Vec<_> = ArticleTextNodeExtractor::nodes_to_check(doc)
             .filter(|n| !n.is_noise_node())
-            .filter(|n| {
-                let link_density = n.link_density();
-                link_density <= Self::MAX_LINK_DENSITY
-            })
-            .filter(|n| n.text_content_length() >= Self::MIN_TEXT_LENGTH)
             .filter_map(|node| {
-                // Use .text() to get all text content from element and its children
+                // Extract text ONCE and reuse for all subsequent checks
                 let text = node.text();
-                if !text.trim().is_empty() && !ArticleTextNode::is_noise_text(&text) {
-                    if let Some(stats) = lang.stopword_count(&text) {
-                        if stats.stopword_count >= Self::MINIMUM_STOPWORD_COUNT {
-                            let score = Self::calculate_node_score(&node, stats.stopword_count);
-                            return Some((node, stats, score));
-                        }
+                let text_len = text.len();
+
+                // Cheap checks first - fail fast before expensive operations
+                // 1. Check length (cheapest - just len())
+                if text_len < Self::MIN_TEXT_LENGTH {
+                    return None;
+                }
+
+                // 2. Check if empty/noise (cheap string operations)
+                if text.trim().is_empty() || ArticleTextNode::is_noise_text(&text) {
+                    return None;
+                }
+
+                // 3. Check link density (medium cost - requires DOM traversal)
+                let link_density = node.link_density();
+                if link_density > Self::MAX_LINK_DENSITY {
+                    return None;
+                }
+
+                // 4. Stopword counting LAST (most expensive operation!)
+                if let Some(stats) = lang.stopword_count(&text) {
+                    if stats.stopword_count >= Self::MINIMUM_STOPWORD_COUNT {
+                        let score = Self::calculate_node_score(&node, stats.stopword_count);
+                        return Some((node, stats, score));
                     }
                 }
                 None
