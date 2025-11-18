@@ -231,11 +231,14 @@ impl Article {
             )
             .into_owned();
 
+        // Use the detected language from content if available, otherwise use the provided language
+        let final_language = content.language.clone().unwrap_or(language);
+
         Ok(Article {
             url,
             doc,
             content,
-            language,
+            language: final_language,
         })
     }
 
