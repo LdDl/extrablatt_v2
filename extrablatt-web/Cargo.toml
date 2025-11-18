@@ -1,6 +1,6 @@
 [package]
 name = "extrablatt-web"
-version = "0.1.0"
+version = "0.3.0"
 license = "MIT OR Apache-2.0"
 authors = ["Matthias Seitz <matthias.seitz@tum.de>"]
 repository = "https://github.com/mattsse/extrablatt"
@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 wasm-bindgen = { version = "0.2", features = ["serde-serialize"] }
-extrablatt_v2 = { version = "0.2", path = "../", features = ["serde0"] }
+extrablatt_v2 = { version = "0.3", path = "../", features = ["serde0"] }
 wasm-bindgen-futures = "0.4"
 
 [dependencies.web-sys]
