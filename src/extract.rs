@@ -1,12 +1,9 @@
 use std::borrow::Cow;
-
 use std::collections::HashSet;
-use std::ops::Deref;
 
 use reqwest::Url;
 use select::document::Document;
-use select::node::Node;
-use select::predicate::{Attr, Name, Predicate};
+use select::predicate::{Attr, Name};
 use url::Host;
 
 use crate::article::{
@@ -29,6 +26,10 @@ use crate::extract_meta_language::meta_language;
 use crate::extract_thumbnail::meta_thumbnail_url;
 use crate::extract_top_img::meta_img_url;
 use crate::extract_urls::{all_urls, image_urls};
+use crate::extract_base_url::base_url;
+use crate::extract_meta_data::meta_data;
+use crate::extract_canonical::canonical_link;
+use crate::extract_videos::videos;
 
 pub(crate) struct NodeValueQuery<'a> {
     pub name: Name<&'a str>,
@@ -53,65 +54,8 @@ impl<'a> NodeValueQuery<'a> {
     }
 }
 
-/// Represents `<meta>` [`select::node::Node`] in a
-/// [`select::document::Document`].
-pub struct MetaNode<'a> {
-    inner: Node<'a>,
-}
-
-impl<'a> MetaNode<'a> {
-    pub fn attr<'b>(&'a self, attr: &'b str) -> Option<&'a str> {
-        self.inner.attr(attr)
-    }
-
-    /// Value of the `name` attribute in the node.
-    pub fn name_attr(&self) -> Option<&str> {
-        self.attr("name")
-    }
-
-    /// Value of the `property` attribute in the node.
-    pub fn property_attr(&self) -> Option<&str> {
-        self.attr("property")
-    }
-
-    /// Value of the `content` attribute in the node.
-    pub fn content_attr(&self) -> Option<&str> {
-        self.attr("content")
-    }
-
-    /// Value of the `value` attribute in the node.
-    pub fn value_attr(&self) -> Option<&str> {
-        self.attr("value")
-    }
-
-    pub fn key(&self) -> Option<&str> {
-        if let Some(prop) = self.property_attr() {
-            Some(prop)
-        } else {
-            self.name_attr()
-        }
-    }
-
-    pub fn value(&self) -> Option<&str> {
-        if let Some(c) = self.content_attr() {
-            Some(c)
-        } else {
-            self.value_attr()
-        }
-    }
-
-    pub fn is_key_value(&self) -> bool {
-        self.key().is_some() && self.value().is_some()
-    }
-}
-
-impl<'a> Deref for MetaNode<'a> {
-    type Target = Node<'a>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
+// Re-export MetaNode from extract_meta_data module
+pub use crate::extract_meta_data::MetaNode;
 
 /// Used to retrieve all valuable information from a
 /// [`select::document::Document`].
@@ -151,10 +95,7 @@ pub trait Extractor {
 
     /// Finds the href in the `<base>` tag.
     fn base_url(&self, doc: &Document) -> Option<Url> {
-        doc.find(Name("base"))
-            .filter_map(|n| n.attr("href"))
-            .filter_map(|href| Url::parse(href).ok())
-            .next()
+        base_url(doc)
     }
 
     /// Extract content language from meta tag.
@@ -164,10 +105,7 @@ pub trait Extractor {
 
     /// Finds all `<meta>` nodes in the document.
     fn meta_data<'a>(&self, doc: &'a Document) -> Vec<MetaNode<'a>> {
-        doc.find(Name("head").descendant(Name("meta")))
-            .map(|node| MetaNode { inner: node })
-            .filter(MetaNode::is_key_value)
-            .collect()
+        meta_data(doc)
     }
 
 
@@ -483,28 +421,12 @@ pub trait Extractor {
     ///   1. The rel=canonical tag
     ///   2. The og:url tag
     fn canonical_link(&self, doc: &Document) -> Option<Url> {
-        if let Some(link) = doc
-            .find(Name("link").and(Attr("rel", "canonical")))
-            .filter_map(|node| node.attr("href"))
-            .next()
-        {
-            return Url::parse(link).ok();
-        }
-
-        if let Some(meta) = self.meta_content(doc, Attr("property", "og:url")) {
-            return Url::parse(&*meta).ok();
-        }
-
-        None
+        canonical_link(doc)
     }
 
     /// All video content in the article.
     fn videos<'a>(&self, doc: &'a Document, lang: Option<Language>) -> Vec<VideoNode<'a>> {
-        if let Some(node) = article_node(doc, lang.unwrap_or_default()) {
-            node.videos()
-        } else {
-            Vec::new()
-        }
+        videos(doc, lang)
     }
 }
 
