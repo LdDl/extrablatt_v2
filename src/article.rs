@@ -395,11 +395,16 @@ impl ArticleBuilder {
             )
             .into_owned();
 
+        // Use the detected language from content, or fall back to builder's language, or default
+        let final_language = content.language.clone()
+            .or(self.language)
+            .unwrap_or_default();
+
         Ok(Article {
             url,
             doc,
             content,
-            language: self.language.unwrap_or_default(),
+            language: final_language,
         })
     }
 }
