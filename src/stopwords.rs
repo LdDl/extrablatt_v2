@@ -10933,3 +10933,42 @@ pub static UKRAINIAN_STOPWORDS: [&str; 373] = [
     "чотирнадцятий",
     "дев'ятнадцятий",
 ];
+
+use lazy_static::lazy_static;
+
+macro_rules! create_stopword_set {
+    ($name:ident, $array:ident) => {
+        lazy_static! {
+            pub static ref $name: HashSet<&'static str> = {
+                $array.iter().copied().collect()
+            };
+        }
+    };
+}
+
+// Create HashSets for all 25 languages used in Language enum
+create_stopword_set!(ARABIC_STOPWORDS_SET, ARABIC_STOPWORDS);
+create_stopword_set!(RUSSIAN_STOPWORDS_SET, RUSSIAN_STOPWORDS);
+create_stopword_set!(DUTCH_STOPWORDS_SET, DUTCH_STOPWORDS);
+create_stopword_set!(GERMAN_STOPWORDS_SET, GERMAN_STOPWORDS);
+create_stopword_set!(ENGLISH_STOPWORDS_SET, ENGLISH_STOPWORDS);
+create_stopword_set!(SPANISH_STOPWORDS_SET, SPANISH_STOPWORDS);
+create_stopword_set!(FRENCH_STOPWORDS_SET, FRENCH_STOPWORDS);
+create_stopword_set!(HEBREW_STOPWORDS_SET, HEBREW_STOPWORDS);
+create_stopword_set!(ITALIAN_STOPWORDS_SET, ITALIAN_STOPWORDS);
+create_stopword_set!(KOREAN_STOPWORDS_SET, KOREAN_STOPWORDS);
+create_stopword_set!(NORWEGIAN_STOPWORDS_SET, NORWEGIAN_STOPWORDS);
+create_stopword_set!(PERSIAN_STOPWORDS_SET, PERSIAN_STOPWORDS);
+create_stopword_set!(POLISH_STOPWORDS_SET, POLISH_STOPWORDS);
+create_stopword_set!(PORTUGUESE_STOPWORDS_SET, PORTUGUESE_STOPWORDS);
+create_stopword_set!(SWEDISH_STOPWORDS_SET, SWEDISH_STOPWORDS);
+create_stopword_set!(HUNGARIAN_STOPWORDS_SET, HUNGARIAN_STOPWORDS);
+create_stopword_set!(FINNISH_STOPWORDS_SET, FINNISH_STOPWORDS);
+create_stopword_set!(DANISH_STOPWORDS_SET, DANISH_STOPWORDS);
+create_stopword_set!(CHINESE_STOPWORDS_SET, CHINESE_STOPWORDS);
+create_stopword_set!(INDONESIAN_STOPWORDS_SET, INDONESIAN_STOPWORDS);
+create_stopword_set!(VIETNAMESE_STOPWORDS_SET, VIETNAMESE_STOPWORDS);
+create_stopword_set!(SWAHILI_STOPWORDS_SET, SWAHILI_STOPWORDS);
+create_stopword_set!(TURKISH_STOPWORDS_SET, TURKISH_STOPWORDS);
+create_stopword_set!(GREEK_STOPWORDS_SET, GREEK_STOPWORDS);
+create_stopword_set!(UKRAINIAN_STOPWORDS_SET, UKRAINIAN_STOPWORDS);

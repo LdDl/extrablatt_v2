@@ -138,11 +138,11 @@ impl Language {
     /// language are available.
     pub fn stopword_count(&self, txt: &str) -> Option<WordsStats> {
         #[cfg(feature = "stopwords")]
-        if let Some(stopwords) = self.stopwords() {
+        if let Some(stopwords_set) = self.stopwords_set() {
             let (word_count, stopword_count) = ArticleTextNodeExtractor::words(txt).fold(
                 (0usize, 0usize),
                 |(word_count, mut stopword_count), word| {
-                    if stopwords.contains(&word) {
+                    if stopwords_set.contains(word) {
                         stopword_count += 1;
                     }
 
@@ -156,7 +156,7 @@ impl Language {
                 avg_word_length: match cnt {
                     0 => 0.0,
                     _ => word_count as f64 / cnt as f64,
-                }, 
+                },
             })
         } else {
             None
@@ -201,6 +201,38 @@ impl Language {
             Language::Turkish => Some(&TURKISH_STOPWORDS),
             Language::Greek => Some(&GREEK_STOPWORDS),
             Language::Ukrainian => Some(&UKRAINIAN_STOPWORDS),
+            Language::Other(_) => None,
+        }
+    }
+
+    #[cfg(feature = "stopwords")]
+    fn stopwords_set(&self) -> Option<&std::collections::HashSet<&'static str>> {
+        match self {
+            Language::Arabic => Some(&ARABIC_STOPWORDS_SET),
+            Language::Russian => Some(&RUSSIAN_STOPWORDS_SET),
+            Language::Dutch => Some(&DUTCH_STOPWORDS_SET),
+            Language::German => Some(&GERMAN_STOPWORDS_SET),
+            Language::English => Some(&ENGLISH_STOPWORDS_SET),
+            Language::Spanish => Some(&SPANISH_STOPWORDS_SET),
+            Language::French => Some(&FRENCH_STOPWORDS_SET),
+            Language::Hebrew => Some(&HEBREW_STOPWORDS_SET),
+            Language::Italian => Some(&ITALIAN_STOPWORDS_SET),
+            Language::Korean => Some(&KOREAN_STOPWORDS_SET),
+            Language::Norwegian => Some(&NORWEGIAN_STOPWORDS_SET),
+            Language::Persian => Some(&PERSIAN_STOPWORDS_SET),
+            Language::Polish => Some(&POLISH_STOPWORDS_SET),
+            Language::Portuguese => Some(&PORTUGUESE_STOPWORDS_SET),
+            Language::Swedish => Some(&SWEDISH_STOPWORDS_SET),
+            Language::Hungarian => Some(&HUNGARIAN_STOPWORDS_SET),
+            Language::Finnish => Some(&FINNISH_STOPWORDS_SET),
+            Language::Danish => Some(&DANISH_STOPWORDS_SET),
+            Language::Chinese => Some(&CHINESE_STOPWORDS_SET),
+            Language::Indonesian => Some(&INDONESIAN_STOPWORDS_SET),
+            Language::Vietnamese => Some(&VIETNAMESE_STOPWORDS_SET),
+            Language::Swahili => Some(&SWAHILI_STOPWORDS_SET),
+            Language::Turkish => Some(&TURKISH_STOPWORDS_SET),
+            Language::Greek => Some(&GREEK_STOPWORDS_SET),
+            Language::Ukrainian => Some(&UKRAINIAN_STOPWORDS_SET),
             Language::Other(_) => None,
         }
     }
