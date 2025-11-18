@@ -456,9 +456,9 @@ impl<'a> ArticleTextNode<'a> {
 
     /// Post-process text to clean up formatting
     fn post_process_text(text: &str) -> String {
+        let text = text.replace('\u{a0}', " ");
         let lines: Vec<&str> = text.lines().collect();
         let mut cleaned_lines = Vec::new();
-        
         for line in lines {
             let trimmed = line.trim();
             
