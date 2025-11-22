@@ -29,6 +29,13 @@ Html Scraping is done via [select.rs](https://github.com/utkarshkukreti/select.r
 
 Customizable for specific news sites/layouts via the `Extractor` trait.
 
+## Diffences from original extrablatt
+
+* Updated dependencies
+* More heuristics for article body/authors and etc data extraction
+* Reoganized code structure
+* More references to [newspaper4k](https://github.com/AndyTheFactory/newspaper4k) ideas
+
 ## Documentation
 
 Full Documentation [https://docs.rs/extrablatt_v2](https://docs.rs/extrablatt_v2)
