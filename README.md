@@ -35,6 +35,8 @@ Customizable for specific news sites/layouts via the `Extractor` trait.
 * More heuristics for article body/authors and etc data extraction
 * Reoganized code structure
 * More references to [newspaper4k](https://github.com/AndyTheFactory/newspaper4k) ideas
+* Configurable threads num
+* I am not used to use WASM or CLI in this fork, so those parts are mostly untouched and I can't guarantee they work as expected.
 
 ## Documentation
 

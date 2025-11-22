@@ -143,7 +143,7 @@ impl<TExtractor: Extractor> Extrablatt<TExtractor> {
                     })
                 }),
         )
-        .buffer_unordered(10)
+        .buffer_unordered(self.config.concurrency)
         .collect::<Vec<_>>()
         .await;
 
@@ -260,7 +260,7 @@ impl<TExtractor: Extractor> Extrablatt<TExtractor> {
                 .send()
                 .then(|res| async { (cat, DocumentDownloadState::from_response(res).await) })
         }))
-        .buffer_unordered(10)
+        .buffer_unordered(self.config.concurrency)
         .collect::<Vec<_>>()
         .await;
         let mut results = Vec::with_capacity(requests.len());
@@ -919,11 +919,16 @@ pub struct Config {
     user_agent: String,
     /// Timeout for requests.
     request_timeout: Duration,
+    /// Number of concurrent requests for downloading articles/categories.
+    concurrency: usize,
 }
 
 impl Config {
     /// Default timeout for requests made inside `extrablatt`.
     pub const DEFAULT_REQUEST_TIMEOUT_SEC: u64 = 30;
+
+    /// Default number of concurrent requests.
+    pub const DEFAULT_CONCURRENCY: usize = 10;
 
     /// Default user agent for `extrablatt`.
     #[inline]
@@ -935,6 +940,12 @@ impl Config {
     #[inline]
     pub fn builder() -> ConfigBuilder {
         ConfigBuilder::default()
+    }
+
+    /// Number of concurrent requests for downloading articles/categories.
+    #[inline]
+    pub fn concurrency(&self) -> usize {
+        self.concurrency
     }
 
     /// Checks that the article fulfills the configured restrictions.
@@ -1058,6 +1069,8 @@ pub struct ConfigBuilder {
     user_agent: Option<String>,
     /// Timeout for requests.
     request_timeout: Option<Duration>,
+    /// Number of concurrent requests for downloading articles/categories.
+    concurrency: Option<usize>,
 }
 
 impl ConfigBuilder {
@@ -1136,6 +1149,14 @@ impl ConfigBuilder {
         self
     }
 
+    /// Set the number of concurrent requests for downloading articles/categories.
+    ///
+    /// Default is [`Config::DEFAULT_CONCURRENCY`] (10).
+    pub fn concurrency(mut self, concurrency: usize) -> Self {
+        self.concurrency = Some(concurrency);
+        self
+    }
+
     pub fn build(self) -> Config {
         Config {
             min_word_count: self.min_word_count,
@@ -1155,6 +1176,7 @@ impl ConfigBuilder {
             request_timeout: self
                 .request_timeout
                 .unwrap_or_else(|| Duration::from_secs(Config::DEFAULT_REQUEST_TIMEOUT_SEC)),
+            concurrency: self.concurrency.unwrap_or(Config::DEFAULT_CONCURRENCY),
         }
     }
 
@@ -1179,6 +1201,7 @@ impl ConfigBuilder {
             http_success_only: None,
             user_agent: None,
             request_timeout: None,
+            concurrency: None,
         }
     }
 }
