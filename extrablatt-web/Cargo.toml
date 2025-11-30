@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 wasm-bindgen = { version = "0.2", features = ["serde-serialize"] }
-extrablatt_v2 = { version = "0.3.2", path = "../", features = ["serde0"] }
+extrablatt_v2 = { version = "0.4.0", path = "../", features = ["serde0"] }
 wasm-bindgen-futures = "0.4"
 
 [dependencies.web-sys]

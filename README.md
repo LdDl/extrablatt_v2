@@ -36,6 +36,7 @@ Customizable for specific news sites/layouts via the `Extractor` trait.
 * Reoganized code structure
 * More references to [newspaper4k](https://github.com/AndyTheFactory/newspaper4k) ideas
 * Configurable threads num
+* Proxy support - route requests through HTTP/HTTPS/SOCKS5 proxies if needed
 * I am not used to use WASM or CLI in this fork, so those parts are mostly untouched and I can't guarantee they work as expected.
 
 ## Documentation
@@ -68,6 +69,62 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ````
+
+## Proxy Support
+
+Route all HTTP requests through a proxy server:
+
+```rust
+use extrablatt_v2::Extrablatt;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let site = Extrablatt::builder("https://some-news.com/")?
+        .proxy("http://127.0.0.1:8080")  // HTTP proxy
+        // .proxy("socks5://127.0.0.1:1080")  // SOCKS5 proxy
+        .build()
+        .await?;
+
+    // All requests now go through the proxy
+    let mut stream = site.into_stream();
+    // ...
+
+    Ok(())
+}
+```
+
+Supported proxy formats:
+- `http://host:port` - HTTP proxy
+- `https://host:port` - HTTPS proxy
+- `socks5://host:port` - SOCKS5 proxy
+
+### Testing Proxy Manually
+
+Use [mitmproxy](https://mitmproxy.org/) via Docker to verify requests go through the proxy:
+
+```bash
+# Terminal 1: Start mitmproxy
+docker run --rm -it -p 8080:8080 mitmproxy/mitmproxy
+
+# Terminal 2: Run the test example
+cargo run --example proxy_manual_test -- http://127.0.0.1:8080
+```
+
+You should see the HTTP request appear in mitmproxy's console, proving traffic is routed through the proxy.
+
+<img src="images/mitmproxy.png" alt="mitmproxy example" width="600"/>
+
+```
+=== Proxy Test ===
+Target URL: http://httpbin.org/ip
+Proxy: Some("http://127.0.0.1:8080")
+Configuring proxy: http://127.0.0.1:8080
+Connecting...
+SUCCESS: Connected through proxy!
+If using mitmproxy, you should see the request in the proxy console.
+```
+
+**Note:** HTTPS requests through mitmproxy will fail with certificate errors (expected behavior - mitmproxy intercepts SSL). For testing, use HTTP URLs or configure your system to trust mitmproxy's CA certificate.
 
 ## Command Line
 

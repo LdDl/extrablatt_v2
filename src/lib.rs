@@ -150,6 +150,7 @@ pub mod language;
 mod stopwords;
 pub mod text;
 pub mod video;
+mod proxy;
 
 pub mod nlp {
 

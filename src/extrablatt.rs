@@ -671,6 +671,9 @@ pub struct ExtrablattBuilder {
     /// Whether to extract and store the categories of the news paper's main
     /// page.
     categories: bool,
+    /// Optional proxy URL for HTTP requests.
+    /// Format: "http://proxy:port" or "https://proxy:port" or "socks5://proxy:port"
+    proxy: Option<String>,
 }
 
 impl ExtrablattBuilder {
@@ -681,6 +684,7 @@ impl ExtrablattBuilder {
             language: None,
             headers: None,
             categories: true,
+            proxy: None,
         })
     }
 
@@ -701,6 +705,31 @@ impl ExtrablattBuilder {
 
     pub fn categories(mut self, categories: bool) -> Self {
         self.categories = categories;
+        self
+    }
+
+    /// Set a proxy for all HTTP requests.
+    ///
+    /// The proxy URL should be in the format:
+    /// - `http://proxy:port` for HTTP proxy
+    /// - `https://proxy:port` for HTTPS proxy
+    /// - `socks5://proxy:port` for SOCKS5 proxy
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use extrablatt_v2::Extrablatt;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let site = Extrablatt::builder("https://example.com")?
+    ///         .proxy("http://127.0.0.1:8080")
+    ///         .build()
+    ///         .await?;
+    /// #   Ok(())
+    /// # }
+    /// ```
+    pub fn proxy<T: Into<String>>(mut self, proxy: T) -> Self {
+        self.proxy = Some(proxy.into());
         self
     }
 
@@ -725,11 +754,17 @@ impl ExtrablattBuilder {
                     config.user_agent.parse().map_err(|_| ExtrablattError::UserAgentParseError)?,
                 );
             }
-            Client::builder()
+            let mut client_builder = Client::builder()
                 .default_headers(headers)
-                .timeout(config.request_timeout)
-                .build()
-                .map_err(ExtrablattError::Reqwest)?
+                .timeout(config.request_timeout);
+
+            // Configure proxy if provided
+            if let Some(ref proxy_url) = self.proxy {
+                let proxy = reqwest::Proxy::all(proxy_url).map_err(ExtrablattError::Reqwest)?;
+                client_builder = client_builder.proxy(proxy);
+            }
+
+            client_builder.build().map_err(ExtrablattError::Reqwest)?
         };
         let resp = client.get(base_url.clone()).send().await;
         let (main_page, _) = DocumentDownloadState::from_response(resp).await.map_err(|(_, err)| err)?;
