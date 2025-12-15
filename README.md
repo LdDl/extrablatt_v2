@@ -97,6 +97,27 @@ Supported proxy formats:
 - `http://host:port` - HTTP proxy
 - `https://host:port` - HTTPS proxy
 - `socks5://host:port` - SOCKS5 proxy
+- `http://user:password@host:port` - HTTP proxy with authentication
+
+### Disabling System Proxy
+
+By default, reqwest reads proxy settings from environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`).
+To ignore system proxy settings and make direct connections, use `.no_system_proxy()`:
+
+```rust
+use extrablatt_v2::Extrablatt;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let site = Extrablatt::builder("https://some-news.com/")?
+        .no_system_proxy()  // Ignore HTTP_PROXY/HTTPS_PROXY env vars
+        .build()
+        .await?;
+
+    // Requests connect directly, ignoring system proxy
+    Ok(())
+}
+```
 
 ### Testing Proxy Manually
 

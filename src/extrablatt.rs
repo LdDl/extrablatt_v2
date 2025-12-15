@@ -674,6 +674,9 @@ pub struct ExtrablattBuilder {
     /// Optional proxy URL for HTTP requests.
     /// Format: "http://proxy:port" or "https://proxy:port" or "socks5://proxy:port"
     proxy: Option<String>,
+    /// If true, disable automatic system proxy detection from environment variables.
+    /// When set, HTTP_PROXY/HTTPS_PROXY/ALL_PROXY env vars will be ignored.
+    no_system_proxy: bool,
 }
 
 impl ExtrablattBuilder {
@@ -685,6 +688,7 @@ impl ExtrablattBuilder {
             headers: None,
             categories: true,
             proxy: None,
+            no_system_proxy: false,
         })
     }
 
@@ -733,6 +737,31 @@ impl ExtrablattBuilder {
         self
     }
 
+    /// Disable automatic system proxy detection from environment variables.
+    ///
+    /// When called, the HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, and NO_PROXY
+    /// environment variables will be ignored. Use this when you want to
+    /// ensure no proxy is used unless explicitly set via `.proxy()`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use extrablatt_v2::Extrablatt;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     // This will NOT use any system proxy, even if HTTP_PROXY is set
+    ///     let site = Extrablatt::builder("https://example.com")?
+    ///         .no_system_proxy()
+    ///         .build()
+    ///         .await?;
+    /// #   Ok(())
+    /// # }
+    /// ```
+    pub fn no_system_proxy(mut self) -> Self {
+        self.no_system_proxy = true;
+        self
+    }
+
     /// Create a new builder with a specific extractor.
     pub async fn build_with_extractor<TExtractor: Extractor>(
         self,
@@ -758,10 +787,13 @@ impl ExtrablattBuilder {
                 .default_headers(headers)
                 .timeout(config.request_timeout);
 
-            // Configure proxy if provided
+            // Configure proxy if provided, or disable system proxy if requested
             if let Some(ref proxy_url) = self.proxy {
                 let proxy = reqwest::Proxy::all(proxy_url).map_err(ExtrablattError::Reqwest)?;
                 client_builder = client_builder.proxy(proxy);
+            } else if self.no_system_proxy {
+                // Disable reading proxy settings from environment variables
+                client_builder = client_builder.no_proxy();
             }
 
             client_builder.build().map_err(ExtrablattError::Reqwest)?
