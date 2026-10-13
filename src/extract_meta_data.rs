@@ -1,7 +1,7 @@
-use std::ops::Deref;
 use select::document::Document;
 use select::node::Node;
 use select::predicate::{Name, Predicate};
+use std::ops::Deref;
 
 /// Represents `<meta>` [`select::node::Node`] in a
 /// [`select::document::Document`].

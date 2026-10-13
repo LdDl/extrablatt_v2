@@ -5,9 +5,9 @@ use select::document::Document;
 use select::node::Node;
 use select::predicate::{Attr, Class, Name, Predicate};
 
+use crate::Language;
 use crate::clean::{DefaultDocumentCleaner, DocumentCleaner};
 use crate::video::VideoNode;
-use crate::Language;
 use url::Url;
 
 /// Expanded attribute key-value combinations to identify the root node for textual content
@@ -64,22 +64,28 @@ impl<'a> TextContainer<'a> for Node<'a> {
     }
 
     fn link_density(&self) -> f64 {
-        let link_text_length: usize = self.find(Name("a"))
-            .map(|n| n.text().chars().count())
-            .sum();
-        
+        let link_text_length: usize = self.find(Name("a")).map(|n| n.text().chars().count()).sum();
+
         let total_text_length = self.text_content_length();
-        
+
         if total_text_length == 0 {
             return 1.0;
         }
-        
+
         link_text_length as f64 / total_text_length as f64
     }
 
     fn is_noise_node(&self) -> bool {
         // Check for script, style, link, meta tags - these should NEVER be processed
-        if Name("script").or(Name("style")).or(Name("link")).or(Name("meta")).or(Name("noscript")).or(Name("figcaption")).or(Name("figure")).matches(self) {
+        if Name("script")
+            .or(Name("style"))
+            .or(Name("link"))
+            .or(Name("meta"))
+            .or(Name("noscript"))
+            .or(Name("figcaption"))
+            .or(Name("figure"))
+            .matches(self)
+        {
             return true;
         }
 
@@ -97,13 +103,14 @@ impl<'a> TextContainer<'a> for Node<'a> {
         if let Some(class) = self.attr("class") {
             let class_lower = class.to_lowercase();
             // Be specific to avoid false positives - check for clear footer/bottom patterns
-            if class_lower.contains("articlebottom") ||
-               class_lower.contains("article-bottom") ||
-               class_lower.contains("footer") ||
-               class_lower.contains("sidebar") ||
-               class_lower.contains("widget") ||
-               class_lower.contains("related-") ||
-               class_lower.contains("recommendation") {
+            if class_lower.contains("articlebottom")
+                || class_lower.contains("article-bottom")
+                || class_lower.contains("footer")
+                || class_lower.contains("sidebar")
+                || class_lower.contains("widget")
+                || class_lower.contains("related-")
+                || class_lower.contains("recommendation")
+            {
                 return true;
             }
         }
@@ -111,9 +118,10 @@ impl<'a> TextContainer<'a> for Node<'a> {
         // Check for tracking pixels and invisible images
         if Name("img").matches(self) {
             if let Some(style) = self.attr("style") {
-                if style.contains("display: none") ||
-                   style.contains("visibility: hidden") ||
-                   (style.contains("position: absolute") && style.contains("left: -9999px")) {
+                if style.contains("display: none")
+                    || style.contains("visibility: hidden")
+                    || (style.contains("position: absolute") && style.contains("left: -9999px"))
+                {
                     return true;
                 }
             }
@@ -122,7 +130,13 @@ impl<'a> TextContainer<'a> for Node<'a> {
         // Check if node is inside a script, style, figcaption, footer, or ad container tag
         let mut current = self.parent();
         while let Some(parent) = current {
-            if Name("script").or(Name("style")).or(Name("noscript")).or(Name("figcaption")).or(Name("figure")).matches(&parent) {
+            if Name("script")
+                .or(Name("style"))
+                .or(Name("noscript"))
+                .or(Name("figcaption"))
+                .or(Name("figure"))
+                .matches(&parent)
+            {
                 return true;
             }
             // Also check for data-image-caption attribute on parents
@@ -137,13 +151,14 @@ impl<'a> TextContainer<'a> for Node<'a> {
             if let Some(class) = parent.attr("class") {
                 let class_lower = class.to_lowercase();
                 // Be specific to avoid false positives - check for clear footer/bottom patterns
-                if class_lower.contains("articlebottom") ||
-                   class_lower.contains("article-bottom") ||
-                   class_lower.contains("footer") ||
-                   class_lower.contains("sidebar") ||
-                   class_lower.contains("widget") ||
-                   class_lower.contains("related-") ||
-                   class_lower.contains("recommendation") {
+                if class_lower.contains("articlebottom")
+                    || class_lower.contains("article-bottom")
+                    || class_lower.contains("footer")
+                    || class_lower.contains("sidebar")
+                    || class_lower.contains("widget")
+                    || class_lower.contains("related-")
+                    || class_lower.contains("recommendation")
+                {
                     return true;
                 }
             }
@@ -162,7 +177,12 @@ pub struct TextNodeFind<'a> {
 impl<'a> TextNodeFind<'a> {
     fn is_text_node(node: &Node<'a>) -> bool {
         // Newspaper4k approach: be selective about divs
-        if Name("p").or(Name("pre")).or(Name("td")).or(Name("article")).matches(node) {
+        if Name("p")
+            .or(Name("pre"))
+            .or(Name("td"))
+            .or(Name("article"))
+            .matches(node)
+        {
             return true;
         }
 
@@ -170,19 +190,18 @@ impl<'a> TextNodeFind<'a> {
         if Name("div").matches(node) {
             // Check for article-related classes or IDs
             if let Some(class) = node.attr("class") {
-                if class.contains("article") ||
-                   class.contains("story") ||
-                   class.contains("paragraph") ||
-                   class.contains("content") ||
-                   class.contains("post") ||
-                   class.contains("entry") {
+                if class.contains("article")
+                    || class.contains("story")
+                    || class.contains("paragraph")
+                    || class.contains("content")
+                    || class.contains("post")
+                    || class.contains("entry")
+                {
                     return true;
                 }
             }
             if let Some(id) = node.attr("id") {
-                if id.contains("article") ||
-                   id.contains("story") ||
-                   id.contains("content") {
+                if id.contains("article") || id.contains("story") || id.contains("content") {
                     return true;
                 }
             }
@@ -216,7 +235,9 @@ impl<'a> TextNodeFind<'a> {
     }
 
     fn is_non_content_by_attr(node: &Node<'a>) -> bool {
-        NON_CONTENT_ATTR.iter().any(|&(k, v)| Attr(k, v).matches(node))
+        NON_CONTENT_ATTR
+            .iter()
+            .any(|&(k, v)| Attr(k, v).matches(node))
     }
 
     fn new(document: &'a Document) -> Self {
@@ -231,12 +252,12 @@ impl<'a> Iterator for TextNodeFind<'a> {
         while self.next < self.document.nodes.len() {
             let node = self.document.nth(self.next).unwrap();
             self.next += 1;
-            
+
             if Self::is_bad(&node) || Self::is_non_content_by_attr(&node) || node.is_noise_node() {
                 self.next += node.descendants().count();
                 continue;
             }
-            
+
             if Self::is_text_node(&node) {
                 return Some(node);
             }
@@ -324,17 +345,19 @@ impl<'a> ArticleTextNode<'a> {
         // If all links are nofollow, it's likely promotional content
         all_nofollow
     }
-    
+
     /// Extract text while filtering out noise nodes
     fn extract_content_text(&self) -> String {
         let mut text_parts = Vec::new();
-        
+
         // First, try to extract from proper paragraph structures
-        let paragraphs: Vec<_> = self.inner.find(Name("p"))
+        let paragraphs: Vec<_> = self
+            .inner
+            .find(Name("p"))
             .filter(|n| !n.is_noise_node())
             .filter(|n| n.text_content_length() >= 20) // Minimum reasonable paragraph length
             .collect();
-        
+
         if !paragraphs.is_empty() {
             for para in paragraphs {
                 if let Some(text) = para.as_text() {
@@ -345,90 +368,98 @@ impl<'a> ArticleTextNode<'a> {
                 }
             }
         }
-        
+
         // If no good paragraphs found, fall back to general text extraction
         if text_parts.is_empty() {
             for node in self.inner.descendants() {
                 if node.is_noise_node() {
                     continue;
                 }
-                
+
                 // Skip nodes that are likely to contain code or metadata
                 if Self::is_likely_code_node(&node) {
                     continue;
                 }
-                
+
                 if let Some(text) = node.as_text() {
                     let trimmed = text.trim();
-                    if !trimmed.is_empty() && 
-                       trimmed.len() >= 10 && 
-                       Self::is_likely_content_text(trimmed) {
+                    if !trimmed.is_empty()
+                        && trimmed.len() >= 10
+                        && Self::is_likely_content_text(trimmed)
+                    {
                         text_parts.push(trimmed.to_string());
                     }
                 }
             }
         }
-        
+
         text_parts.join("\n\n")
     }
 
     /// Check if text looks like meaningful content (not code, not metadata)
     fn is_likely_content_text(text: &str) -> bool {
         let text = text.trim();
-        
+
         // Skip very short texts
         if text.len() < 10 {
             return false;
         }
-        
+
         // Skip texts that contain JavaScript patterns
-        if text.contains("function(") || 
-           text.contains("=>") || 
-           text.contains("const ") || 
-           text.contains("let ") || 
-           text.contains("var ") ||
-           text.contains("getCookie") ||
-           text.contains("navigator.") ||
-           text.contains("XMLHttpRequest") {
+        if text.contains("function(")
+            || text.contains("=>")
+            || text.contains("const ")
+            || text.contains("let ")
+            || text.contains("var ")
+            || text.contains("getCookie")
+            || text.contains("navigator.")
+            || text.contains("XMLHttpRequest")
+        {
             return false;
         }
-        
+
         // Skip texts that are mostly URLs or file paths
-        if text.starts_with("http://") || text.starts_with("https://") ||
-           text.contains("/dist/") || text.contains("/assets/") ||
-           text.contains(".css") || text.contains(".js") {
+        if text.starts_with("http://")
+            || text.starts_with("https://")
+            || text.contains("/dist/")
+            || text.contains("/assets/")
+            || text.contains(".css")
+            || text.contains(".js")
+        {
             return false;
         }
-        
+
         // Skip texts that look like CSS or HTML attributes
-        if (text.contains("class=") && text.contains("\"")) ||
-           (text.contains("src=") && text.contains("\"")) ||
-           (text.contains("alt=") && text.contains("\"")) ||
-           (text.contains("height=") && text.contains("\"")) {
+        if (text.contains("class=") && text.contains("\""))
+            || (text.contains("src=") && text.contains("\""))
+            || (text.contains("alt=") && text.contains("\""))
+            || (text.contains("height=") && text.contains("\""))
+        {
             return false;
         }
-        
+
         // Skip tracking and analytics code
-        if text.contains("webvisor:") || 
-           text.contains("clickmap:") || 
-           text.contains("trackLinks:") ||
-           text.contains("analytics.") {
+        if text.contains("webvisor:")
+            || text.contains("clickmap:")
+            || text.contains("trackLinks:")
+            || text.contains("analytics.")
+        {
             return false;
         }
-        
+
         // Check for reasonable text characteristics
         let alpha_count = text.chars().filter(|c| c.is_alphabetic()).count();
         let space_count = text.chars().filter(|c| c.is_whitespace()).count();
         let total_chars = text.chars().count();
-        
+
         if total_chars == 0 {
             return false;
         }
-        
+
         // Good content should have reasonable alphabetic and space ratios
         let alpha_ratio = alpha_count as f64 / total_chars as f64;
         let space_ratio = space_count as f64 / total_chars as f64;
-        
+
         alpha_ratio > 0.4 && space_ratio > 0.05 && alpha_ratio < 0.95
     }
 
@@ -436,21 +467,23 @@ impl<'a> ArticleTextNode<'a> {
     fn is_likely_code_node(node: &Node) -> bool {
         // Script and style tags are already filtered by is_noise_node
         // Check for inline event handlers and other code indicators
-        if let Some(attr) = node.attr("onclick")
+        if let Some(attr) = node
+            .attr("onclick")
             .or_else(|| node.attr("onload"))
-            .or_else(|| node.attr("onsubmit")) {
+            .or_else(|| node.attr("onsubmit"))
+        {
             if attr.contains("function") || attr.contains("(") {
                 return true;
             }
         }
-        
+
         // Check parent nodes for code indicators
         if let Some(parent) = node.parent() {
             if parent.is(Name("script")) || parent.is(Name("style")) {
                 return true;
             }
         }
-        
+
         false
     }
 
@@ -461,71 +494,82 @@ impl<'a> ArticleTextNode<'a> {
         let mut cleaned_lines = Vec::new();
         for line in lines {
             let trimmed = line.trim();
-            
+
             if trimmed.is_empty() {
                 continue;
             }
-            
+
             // Skip lines that still look like code after initial filtering
             if Self::is_code_like_line(trimmed) {
                 continue;
             }
-            
+
             cleaned_lines.push(trimmed);
         }
-        
+
         cleaned_lines.join("\n")
     }
 
-     fn is_code_like_line(line: &str) -> bool {
+    fn is_code_like_line(line: &str) -> bool {
         let line = line.trim();
-        
+
         // Lines with lots of special characters but few words
         let word_count = line.split_whitespace().count();
-        let special_char_count = line.chars().filter(|c| !c.is_alphanumeric() && !c.is_whitespace()).count();
-        
+        let special_char_count = line
+            .chars()
+            .filter(|c| !c.is_alphanumeric() && !c.is_whitespace())
+            .count();
+
         if word_count > 0 {
             let special_ratio = special_char_count as f64 / line.len() as f64;
             if special_ratio > 0.3 && word_count < 5 {
                 return true;
             }
         }
-        
+
         // Lines with specific code patterns
-        line.contains(";") && line.contains("=") && !line.contains(" ") ||
-        line.contains("()") && line.contains(".") ||
-        line.starts_with("src=") || line.starts_with("alt=") ||
-        line.starts_with("class=") || line.starts_with("height=")
+        line.contains(";") && line.contains("=") && !line.contains(" ")
+            || line.contains("()") && line.contains(".")
+            || line.starts_with("src=")
+            || line.starts_with("alt=")
+            || line.starts_with("class=")
+            || line.starts_with("height=")
     }
 
     /// Check if text looks like noise (CSS, scripts, etc.)
     fn is_noise_text(text: &str) -> bool {
         let text = text.trim();
-        
+
         // Skip very short texts that are likely noise
         if text.len() < 10 {
             return false; // Keep short meaningful texts
         }
-        
+
         // Skip CSS links and script content
-        if text.contains("stylesheet") && text.contains(".css") ||
-           text.contains("rel=\"") && text.contains("href=\"") ||
-           text.contains("<script") || text.contains("<style") ||
-           text.contains("<link") || text.contains("<meta") {
+        if text.contains("stylesheet") && text.contains(".css")
+            || text.contains("rel=\"") && text.contains("href=\"")
+            || text.contains("<script")
+            || text.contains("<style")
+            || text.contains("<link")
+            || text.contains("<meta")
+        {
             return true;
         }
-        
+
         // Skip tracking pixels and invisible content
         if text.contains("position: absolute") && text.contains("left: -9999px") {
             return true;
         }
-        
+
         // Skip content that's mostly URLs or file paths
-        if text.starts_with("http://") || text.starts_with("https://") ||
-           text.contains("/dist/") || text.contains("/assets/") {
+        if text.starts_with("http://")
+            || text.starts_with("https://")
+            || text.contains("/dist/")
+            || text.contains("/assets/")
+        {
             return true;
         }
-        
+
         // Skip content that looks like CSS classes or IDs
         if text.contains("-") && text.contains(".") && text.chars().any(|c| c.is_uppercase()) {
             let word_count = text.split_whitespace().count();
@@ -533,36 +577,38 @@ impl<'a> ArticleTextNode<'a> {
                 return true;
             }
         }
-        
+
         false
     }
 
     fn is_noise_line(line: &str) -> bool {
         let line = line.trim();
-        
+
         // Skip lines that contain HTML tags
         if line.contains('<') && line.contains('>') {
             return true;
         }
-        
+
         // Skip lines that are clearly CSS or JS
-        if line.contains("{") && line.contains("}") || 
-           line.contains(";") && line.contains(":") && !line.contains("://") ||
-           line.starts_with("//") || line.starts_with("/*") {
+        if line.contains("{") && line.contains("}")
+            || line.contains(";") && line.contains(":") && !line.contains("://")
+            || line.starts_with("//")
+            || line.starts_with("/*")
+        {
             return true;
         }
-        
+
         false
     }
 
     fn is_low_content_line(line: &str) -> bool {
         let alpha_count = line.chars().filter(|c| c.is_alphabetic()).count();
         let total_chars = line.chars().count();
-        
+
         if total_chars == 0 {
             return true;
         }
-        
+
         // If less than 30% of characters are alphabetic, it's probably not meaningful content
         (alpha_count as f64 / total_chars as f64) < 0.3
     }
@@ -637,7 +683,9 @@ impl ArticleTextNodeExtractor {
 
     pub fn article_body_predicate() -> for<'r, 's> fn(&'r Node<'s>) -> bool {
         |node| {
-            ARTICLE_BODY_ATTR.iter().any(|&(k, v)| Attr(k, v).matches(node))
+            ARTICLE_BODY_ATTR
+                .iter()
+                .any(|&(k, v)| Attr(k, v).matches(node))
         }
     }
 
@@ -713,8 +761,9 @@ impl ArticleTextNodeExtractor {
             // Enhanced scoring with text length and formatting bonuses
             let formatting_bonus = Self::calculate_formatting_bonus(node);
             let length_bonus = (stats.word_count as f64 / 100.0).min(5.0);
-            
-            let upscore = (*base_score as f64 + boost_score + formatting_bonus + length_bonus) as usize;
+
+            let upscore =
+                (*base_score as f64 + boost_score + formatting_bonus + length_bonus) as usize;
 
             // Propagate score to parents with decay
             Self::propagate_score_to_parents(node, upscore, &mut nodes_scores);
@@ -754,7 +803,9 @@ impl ArticleTextNodeExtractor {
         // Check for itemtype (Schema.org)
         if semantic_bonus == 0 {
             if let Some(itemtype) = node.attr("itemtype") {
-                if itemtype.contains("schema.org/Article") || itemtype.contains("schema.org/NewsArticle") {
+                if itemtype.contains("schema.org/Article")
+                    || itemtype.contains("schema.org/NewsArticle")
+                {
                     semantic_bonus = 30;
                 } else if itemtype.contains("schema.org/BlogPosting") {
                     semantic_bonus = 20;
@@ -791,7 +842,7 @@ impl ArticleTextNodeExtractor {
 
     fn calculate_formatting_bonus(node: &Node) -> f64 {
         let mut bonus = 0.0;
-        
+
         // Bonus for text formatting (indicates important content)
         if node.find(Name("strong")).next().is_some() {
             bonus += 2.0;
@@ -805,17 +856,21 @@ impl ArticleTextNodeExtractor {
         if node.find(Name("i")).next().is_some() {
             bonus += 0.5;
         }
-        
+
         // Penalty for too many links
         let link_count = node.find(Name("a")).count();
         if link_count > 5 {
             bonus -= (link_count - 5) as f64 * 0.5;
         }
-        
+
         bonus
     }
 
-    fn propagate_score_to_parents(node: &Node, score: usize, nodes_scores: &mut HashMap<usize, (usize, usize)>) {
+    fn propagate_score_to_parents(
+        node: &Node,
+        score: usize,
+        nodes_scores: &mut HashMap<usize, (usize, usize)>,
+    ) {
         // Newspaper4k approach: parent gets 100%, grandparent gets 40%
         // Parent node (100% of score)
         if let Some(parent) = node.parent() {
@@ -837,7 +892,7 @@ impl ArticleTextNodeExtractor {
         if total_nodes == 0 {
             return 0.0;
         }
-        
+
         let normalized_score = score as f64 / (total_nodes * 10) as f64;
         normalized_score.min(1.0).max(0.0)
     }
@@ -850,7 +905,7 @@ impl ArticleTextNodeExtractor {
     /// Enhanced boostable check that considers both previous and next siblings
     fn is_boostable(node: &Node, lang: Language) -> bool {
         let mut steps_away = 0;
-        
+
         // Check previous siblings
         let mut prev_sibling = node.prev();
         while let Some(sibling) = prev_sibling.filter(|n| n.is(Name("p"))) {
@@ -863,7 +918,7 @@ impl ArticleTextNodeExtractor {
             steps_away += 1;
             prev_sibling = sibling.prev();
         }
-        
+
         // Check next siblings
         steps_away = 0;
         let mut next_sibling = node.next();
@@ -877,7 +932,7 @@ impl ArticleTextNodeExtractor {
             steps_away += 1;
             next_sibling = sibling.next();
         }
-        
+
         false
     }
 
@@ -885,13 +940,13 @@ impl ArticleTextNodeExtractor {
         if node.link_density() > Self::MAX_LINK_DENSITY {
             return false;
         }
-        
+
         if let Some(stats) = node
             .first_children_text()
             .and_then(|txt| lang.stopword_count(txt))
         {
-            stats.stopword_count > Self::MINIMUM_STOPWORD_COUNT && 
-            stats.word_count >= Self::MIN_TEXT_LENGTH / 5
+            stats.stopword_count > Self::MINIMUM_STOPWORD_COUNT
+                && stats.word_count >= Self::MIN_TEXT_LENGTH / 5
         } else {
             false
         }
@@ -920,7 +975,9 @@ pub fn author_text(node: Node) -> String {
 
     let mut string = String::new();
     let mut descendants = node.descendants();
-    let hidden = Class("hidden").or(Class("sr-only")).or(Class("visually-hidden"));
+    let hidden = Class("hidden")
+        .or(Class("sr-only"))
+        .or(Class("visually-hidden"));
 
     'outer: while let Some(child) = descendants.next() {
         if hidden.matches(&child) || child.is_noise_node() {
@@ -940,7 +997,7 @@ pub fn author_text(node: Node) -> String {
             }
         }
     }
-    
+
     // Clean up the extracted text
     string.trim().to_string()
 }

@@ -19,7 +19,9 @@ impl fmt::Display for ArticleError {
             ArticleError::UrlNotInitialized => write!(f, "Url of the article must be initialized."),
             ArticleError::UserAgentParseError => write!(f, "Failed to parse user agent header."),
             ArticleError::UnsuccessfulRequest(url) => write!(f, "Unsuccessful request to {}", url),
-            ArticleError::DocumentReadError(url) => write!(f, "Failed to read {} html as document.", url),
+            ArticleError::DocumentReadError(url) => {
+                write!(f, "Failed to read {} html as document.", url)
+            }
             ArticleError::Reqwest(e) => write!(f, "Reqwest error: {}", e),
             ArticleError::Other(msg) => write!(f, "{}", msg),
         }
@@ -199,7 +201,11 @@ impl Article {
         Self::with_extractor(url, doc, &DefaultExtractor::default())
     }
 
-    pub fn with_extractor<U, T, TExtract>(url: U, doc: T, extractor: &TExtract) -> Result<Article, ArticleError>
+    pub fn with_extractor<U, T, TExtract>(
+        url: U,
+        doc: T,
+        extractor: &TExtract,
+    ) -> Result<Article, ArticleError>
     where
         U: IntoUrl,
         T: AsRef<str>,
@@ -364,7 +370,8 @@ impl ArticleBuilder {
 
             let mut headers = HeaderMap::with_capacity(1);
 
-            let user_agent = self.browser_user_agent
+            let user_agent = self
+                .browser_user_agent
                 .map(|x| x.parse())
                 .unwrap_or_else(|| Config::user_agent().parse());
             let user_agent = match user_agent {
@@ -376,10 +383,18 @@ impl ArticleBuilder {
             Client::builder().default_headers(headers).timeout(timeout)
         };
 
-        let resp = builder.build()?.get(url).send().await.map_err(ArticleError::Reqwest)?;
+        let resp = builder
+            .build()?
+            .get(url)
+            .send()
+            .await
+            .map_err(ArticleError::Reqwest)?;
 
         if !resp.status().is_success() {
-            return Err(ArticleError::UnsuccessfulRequest(format!("{:?}", resp.url())));
+            return Err(ArticleError::UnsuccessfulRequest(format!(
+                "{:?}",
+                resp.url()
+            )));
         }
 
         let url = resp.url().to_owned();
@@ -396,7 +411,9 @@ impl ArticleBuilder {
             .into_owned();
 
         // Use the detected language from content, or fall back to builder's language, or default
-        let final_language = content.language.clone()
+        let final_language = content
+            .language
+            .clone()
             .or(self.language)
             .unwrap_or_default();
 

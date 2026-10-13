@@ -10939,9 +10939,7 @@ use lazy_static::lazy_static;
 macro_rules! create_stopword_set {
     ($name:ident, $array:ident) => {
         lazy_static! {
-            pub static ref $name: HashSet<&'static str> = {
-                $array.iter().copied().collect()
-            };
+            pub static ref $name: HashSet<&'static str> = { $array.iter().copied().collect() };
         }
     };
 }

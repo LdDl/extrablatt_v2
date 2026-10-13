@@ -123,20 +123,6 @@ pub use crate::extrablatt::{ArticleStream, Config, Extrablatt, ExtrablattBuilder
 pub use crate::extract::{DefaultExtractor, Extractor};
 pub use crate::language::Language;
 
-pub mod extract_meta;
-pub mod extract_title;
-pub mod extract_pb_date;
-pub mod extract_authors;
-pub mod extract_node;
-pub mod extract_favicon;
-pub mod extract_meta_language;
-pub mod extract_thumbnail;
-pub mod extract_top_img;
-pub mod extract_urls;
-pub mod extract_base_url;
-pub mod extract_meta_data;
-pub mod extract_canonical;
-pub mod extract_videos;
 pub mod article;
 pub mod category;
 pub mod clean;
@@ -144,13 +130,27 @@ pub mod date;
 mod error;
 pub mod extrablatt;
 pub mod extract;
+pub mod extract_authors;
+pub mod extract_base_url;
+pub mod extract_canonical;
+pub mod extract_favicon;
+pub mod extract_meta;
+pub mod extract_meta_data;
+pub mod extract_meta_language;
+pub mod extract_node;
+pub mod extract_pb_date;
+pub mod extract_thumbnail;
+pub mod extract_title;
+pub mod extract_top_img;
+pub mod extract_urls;
+pub mod extract_videos;
 pub mod image;
 pub mod language;
+mod proxy;
 #[cfg(feature = "stopwords")]
 mod stopwords;
 pub mod text;
 pub mod video;
-mod proxy;
 
 pub mod nlp {
 

@@ -1,7 +1,7 @@
+use crate::extract_meta::meta_content;
 use reqwest::Url;
 use select::document::Document;
 use select::predicate::{Attr, Name, Predicate};
-use crate::extract_meta::meta_content;
 
 /// Return the article's canonical URL
 ///

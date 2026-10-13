@@ -1,8 +1,8 @@
-use std::str::FromStr;
-use select::document::Document;
-use select::predicate::{Attr, Name};
 use crate::Language;
 use crate::extract_meta::meta_content;
+use select::document::Document;
+use select::predicate::{Attr, Name};
+use std::str::FromStr;
 
 /// Extract content language from meta tag or html lang attribute.
 pub fn meta_language(doc: &Document) -> Option<Language> {

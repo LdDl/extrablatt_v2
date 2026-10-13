@@ -7,21 +7,21 @@ use fnv::FnvHashMap;
 use futures::stream::{self, Stream};
 use futures::task::Poll;
 use futures::{Future, FutureExt, StreamExt, TryFutureExt};
+use reqwest::Response;
 use reqwest::header::HeaderMap;
 #[cfg(not(target_arch = "wasm32"))]
 use reqwest::header::USER_AGENT;
-use reqwest::Response;
 use reqwest::{Client, IntoUrl, Url};
 use select::document::Document;
 use wasm_timer::Instant;
 
 use crate::error::ExtrablattError;
 
+use crate::Category;
 use crate::article::{Article, ArticleContent, ArticleUrl, PureArticle};
 use crate::extract::{DefaultExtractor, Extractor};
 use crate::language::Language;
 use crate::text::ArticleTextNodeExtractor;
-use crate::Category;
 
 /// Caches article downloads
 #[derive(Debug)]
@@ -361,16 +361,16 @@ impl<TExtractor: Extractor> Extrablatt<TExtractor> {
 
     #[cfg(feature = "archive")]
     pub fn archive(&self) {
-        unimplemented!("coming as soon as reqwest 0.10 is stabilized and archiveis crate is updated to async/await")
+        unimplemented!(
+            "coming as soon as reqwest 0.10 is stabilized and archiveis crate is updated to async/await"
+        )
     }
 }
 
 impl<TExtractor: Extractor + Unpin> Extrablatt<TExtractor> {
     /// Converts the newspaper into a stream, yielding all available
     /// [`crate::Article`]s.
-    pub fn into_stream(
-        mut self,
-    ) -> impl Stream<Item = Result<Article, ExtrablattError>> {
+    pub fn into_stream(mut self) -> impl Stream<Item = Result<Article, ExtrablattError>> {
         let mut articles = Vec::new();
         let mut article_responses = Vec::new();
 
@@ -452,8 +452,7 @@ impl<TExtractor: Extractor + Unpin> Extrablatt<TExtractor> {
     }
 }
 
-type PaperResponse =
-    Pin<Box<dyn Future<Output = Result<(Url, Bytes), ExtrablattError>>>>;
+type PaperResponse = Pin<Box<dyn Future<Output = Result<(Url, Bytes), ExtrablattError>>>>;
 
 type ReadyResponse = (usize, Result<(Url, Bytes), ExtrablattError>);
 
@@ -495,7 +494,9 @@ impl ArticleStream<DefaultExtractor> {
     /// #   Ok(())
     /// # }
     /// ```
-    pub async fn new<T: IntoUrl>(url: T) -> Result<ArticleStream<DefaultExtractor>, ExtrablattError> {
+    pub async fn new<T: IntoUrl>(
+        url: T,
+    ) -> Result<ArticleStream<DefaultExtractor>, ExtrablattError> {
         Ok(ArticleStream::new_with_extractor(url, DefaultExtractor).await?)
     }
 }
@@ -508,7 +509,9 @@ impl<TExtractor: Extractor + Unpin> ArticleStream<TExtractor> {
         url: T,
         extractor: TExtractor,
     ) -> Result<ArticleStream<TExtractor>, ExtrablattError> {
-        let paper = ExtrablattBuilder::new(url)?.build_with_extractor(extractor).await?;
+        let paper = ExtrablattBuilder::new(url)?
+            .build_with_extractor(extractor)
+            .await?;
 
         let article_responses = paper
             .extractor()
@@ -562,93 +565,87 @@ impl<TExtractor: Extractor + Unpin> Stream for ArticleStream<TExtractor> {
         mut self: Pin<&mut Self>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        if let Some(article) = self.articles.pop() {
-            return Poll::Ready(Some(Ok(article)));
-        }
-        if self.article_responses.is_empty() {
-            if let Some((_, doc)) = self.categories.pop() {
-                // add futures to article_response
-                self.queue_category_articles(&doc);
+        loop {
+            if let Some(article) = self.articles.pop() {
+                return Poll::Ready(Some(Ok(article)));
             }
-
-            if self.category_responses.is_empty() {
-                // nothing do anymore
-                return Poll::Ready(None);
+            if self.article_responses.is_empty() {
+                if let Some((_, doc)) = self.categories.pop() {
+                    self.queue_category_articles(&doc);
+                    continue;
+                }
+                if self.category_responses.is_empty() {
+                    return Poll::Ready(None);
+                }
+                match Self::find_ready_response(&mut self.category_responses, cx) {
+                    Some((idx, response)) => {
+                        let _ = self.category_responses.swap_remove(idx);
+                        match response {
+                            Ok((_, body)) => match Document::from_read(&*body) {
+                                Ok(doc) => self.queue_category_articles(&doc),
+                                Err(_) => {
+                                    return Poll::Ready(Some(Err(
+                                        ExtrablattError::ReadDocumentError { body },
+                                    )));
+                                }
+                            },
+                            Err(error) => return Poll::Ready(Some(Err(error))),
+                        }
+                        // Continue until work is polled or all categories are exhausted.
+                        continue;
+                    }
+                    None => return Poll::Pending,
+                }
             }
-
-            // poll pending category futures to get new article futures
-            let item = Self::find_ready_response(&mut self.category_responses, cx);
+            let item = Self::find_ready_response(&mut self.article_responses, cx);
 
             match item {
                 Some((idx, resp)) => {
-                    let _ = self.category_responses.swap_remove(idx);
-                    match resp {
-                        Ok((_, body)) => {
+                    let _ = self.article_responses.swap_remove(idx);
+                    let article = match resp {
+                        Ok((url, body)) => {
                             if let Ok(doc) = Document::from_read(&*body) {
-                                self.queue_category_articles(&doc);
+                                let content = self
+                                    .paper
+                                    .extractor
+                                    .article_content(
+                                        &doc,
+                                        Some(&self.paper.base_url),
+                                        Some(self.paper.language.clone()),
+                                    )
+                                    .into_owned();
+                                let language = self
+                                    .paper
+                                    .extractor
+                                    .meta_language(&doc)
+                                    .unwrap_or_else(|| self.paper.language.clone());
+
+                                if self.paper.config.is_complete(&content) {
+                                    Ok(Article {
+                                        url,
+                                        doc,
+                                        content,
+                                        language,
+                                    })
+                                } else {
+                                    Err(ExtrablattError::IncompleteArticle {
+                                        article: Box::new(PureArticle {
+                                            url,
+                                            content,
+                                            language,
+                                        }),
+                                    })
+                                }
                             } else {
-                                return Poll::Ready(Some(Err(
-                                    ExtrablattError::ReadDocumentError { body },
-                                )));
+                                Err(ExtrablattError::ReadDocumentError { body })
                             }
                         }
-                        Err(e) => {
-                            return Poll::Ready(Some(Err(e)));
-                        }
-                    }
+                        Err(error) => Err(error),
+                    };
+                    return Poll::Ready(Some(article));
                 }
                 None => return Poll::Pending,
             }
-        }
-
-        let item = Self::find_ready_response(&mut self.article_responses, cx);
-
-        match item {
-            Some((idx, resp)) => {
-                let _ = self.article_responses.swap_remove(idx);
-                let article = match resp {
-                    Ok((url, body)) => {
-                        if let Ok(doc) = Document::from_read(&*body) {
-                            let content = self
-                                .paper
-                                .extractor
-                                .article_content(
-                                    &doc,
-                                    Some(&self.paper.base_url),
-                                    Some(self.paper.language.clone()),
-                                )
-                                .into_owned();
-                            let language = self
-                                .paper
-                                .extractor
-                                .meta_language(&doc)
-                                .unwrap_or_else(|| self.paper.language.clone());
-
-                            if self.paper.config.is_complete(&content) {
-                                Ok(Article {
-                                    url,
-                                    doc,
-                                    content,
-                                    language,
-                                })
-                            } else {
-                                Err(ExtrablattError::IncompleteArticle {
-                                    article: Box::new(PureArticle {
-                                        url,
-                                        content,
-                                        language,
-                                    }),
-                                })
-                            }
-                        } else {
-                            Err(ExtrablattError::ReadDocumentError { body })
-                        }
-                    }
-                    Err(error) => Err(error),
-                };
-                Poll::Ready(Some(article))
-            }
-            None => Poll::Pending,
         }
     }
 
@@ -682,7 +679,11 @@ pub struct ExtrablattBuilder {
 impl ExtrablattBuilder {
     pub fn new<T: IntoUrl>(base_url: T) -> Result<Self, ExtrablattError> {
         Ok(Self {
-            base_url: Some(base_url.into_url().map_err(|e| ExtrablattError::UrlParseError { error: e })?),
+            base_url: Some(
+                base_url
+                    .into_url()
+                    .map_err(|e| ExtrablattError::UrlParseError { error: e })?,
+            ),
             config: None,
             language: None,
             headers: None,
@@ -773,14 +774,21 @@ impl ExtrablattBuilder {
         }
         let config = self.config.unwrap_or_default();
         #[cfg(target_arch = "wasm32")]
-        let client = { Client::builder().build().map_err(ExtrablattError::Reqwest)? };
+        let client = {
+            Client::builder()
+                .build()
+                .map_err(ExtrablattError::Reqwest)?
+        };
         #[cfg(not(target_arch = "wasm32"))]
         let client = {
             let mut headers = self.headers.unwrap_or_else(|| HeaderMap::with_capacity(1));
             if !headers.contains_key(USER_AGENT) {
                 headers.insert(
                     USER_AGENT,
-                    config.user_agent.parse().map_err(|_| ExtrablattError::UserAgentParseError)?,
+                    config
+                        .user_agent
+                        .parse()
+                        .map_err(|_| ExtrablattError::UserAgentParseError)?,
                 );
             }
             let mut client_builder = Client::builder()
@@ -799,7 +807,9 @@ impl ExtrablattBuilder {
             client_builder.build().map_err(ExtrablattError::Reqwest)?
         };
         let resp = client.get(base_url.clone()).send().await;
-        let (main_page, _) = DocumentDownloadState::from_response(resp).await.map_err(|(_, err)| err)?;
+        let (main_page, _) = DocumentDownloadState::from_response(resp)
+            .await
+            .map_err(|(_, err)| err)?;
         let mut paper = Extrablatt {
             client,
             language: self.language.unwrap_or_default(),
@@ -1317,3 +1327,7 @@ impl<'a, T: Extractor> DerefMut for ArticleDownloadIter<'a, T> {
         &mut self.inner
     }
 }
+
+#[cfg(test)]
+#[path = "stream_regression_tests.rs"]
+mod stream_regression_tests;

@@ -1,7 +1,7 @@
+use crate::extract_meta::meta_content;
 use select::document::Document;
 use select::predicate::{Attr, Name, Predicate};
 use url::Url;
-use crate::extract_meta::meta_content;
 
 /// Extract the 'top img' as specified by the website.
 pub fn meta_img_url(doc: &Document, base_url: Option<&Url>) -> Option<Url> {

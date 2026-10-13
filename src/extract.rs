@@ -7,29 +7,29 @@ use select::predicate::{Attr, Name};
 use url::Host;
 
 use crate::article::{
-    ArticleContent, ArticleUrl, ALLOWED_FILE_EXT, BAD_DOMAINS, BAD_SEGMENTS, GOOD_SEGMENTS,
+    ALLOWED_FILE_EXT, ArticleContent, ArticleUrl, BAD_DOMAINS, BAD_SEGMENTS, GOOD_SEGMENTS,
 };
 use crate::clean::{DefaultDocumentCleaner, DocumentCleaner};
 use crate::date::{ArticleDate, RE_DATE_SEGMENTS_M_D_Y, RE_DATE_SEGMENTS_Y_M_D};
 
-use crate::category::Category;
-use crate::nlp::CATEGORY_STOPWORDS;
-use crate::video::VideoNode;
 use crate::Language;
-use crate::extract_meta::meta_content;
-use crate::extract_title::title;
-use crate::extract_pb_date::publishing_date;
+use crate::category::Category;
 use crate::extract_authors::authors;
-use crate::extract_node::article_node;
+use crate::extract_base_url::base_url;
+use crate::extract_canonical::canonical_link;
 use crate::extract_favicon::favicon;
+use crate::extract_meta::meta_content;
+use crate::extract_meta_data::meta_data;
 use crate::extract_meta_language::meta_language;
+use crate::extract_node::article_node;
+use crate::extract_pb_date::publishing_date;
 use crate::extract_thumbnail::meta_thumbnail_url;
+use crate::extract_title::title;
 use crate::extract_top_img::meta_img_url;
 use crate::extract_urls::{all_urls, image_urls};
-use crate::extract_base_url::base_url;
-use crate::extract_meta_data::meta_data;
-use crate::extract_canonical::canonical_link;
 use crate::extract_videos::videos;
+use crate::nlp::CATEGORY_STOPWORDS;
+use crate::video::VideoNode;
 
 pub(crate) struct NodeValueQuery<'a> {
     pub name: Name<&'a str>,
@@ -108,7 +108,6 @@ pub trait Extractor {
         meta_data(doc)
     }
 
-
     /// Extract a given meta content form document.
     fn meta_content<'a, 'b>(
         &self,
@@ -147,7 +146,7 @@ pub trait Extractor {
                 // Clean non-breaking spaces from description
                 match desc {
                     Cow::Borrowed(s) => Cow::Owned(s.replace('\u{a0}', " ")),
-                    Cow::Owned(s) => Cow::Owned(s.replace('\u{a0}', " "))
+                    Cow::Owned(s) => Cow::Owned(s.replace('\u{a0}', " ")),
                 }
             })
             .next()
@@ -187,8 +186,7 @@ pub trait Extractor {
         lang: Language,
         cleaner: T,
     ) -> Option<Cow<'a, str>> {
-        article_node(doc, lang)
-            .map(|n| cleaner.clean_node_text(*n).into())
+        article_node(doc, lang).map(|n| cleaner.clean_node_text(*n).into())
     }
 
     /// Extract the `href` attribute for all `<a>` tags of the document.

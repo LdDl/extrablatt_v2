@@ -1,7 +1,7 @@
-use select::document::Document;
-use select::predicate::{Name, Predicate};
 use crate::Language;
 use crate::text::{ArticleTextNode, ArticleTextNodeExtractor};
+use select::document::Document;
+use select::predicate::{Name, Predicate};
 
 /// Detect the [`select::node::Node`] that contains the article's text.
 ///

@@ -1,6 +1,6 @@
+use crate::date::{ArticleDate, DateExtractor};
 use select::document::Document;
 use url::Url;
-use crate::date::{ArticleDate, DateExtractor};
 
 /// Extract a publishing date from the document or URL path.
 pub fn publishing_date(doc: &Document, base_url: Option<&Url>) -> Option<ArticleDate> {

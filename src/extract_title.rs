@@ -1,7 +1,7 @@
-use std::borrow::Cow;
+use crate::extract_meta::meta_content;
 use select::document::Document;
 use select::predicate::{Attr, Name};
-use crate::extract_meta::meta_content;
+use std::borrow::Cow;
 
 const MOTLEY_REPLACEMENT: (&str, &str) = ("&#65533;", "");
 const TITLE_REPLACEMENTS: (&str, &str) = ("&raquo;", "»");
@@ -34,19 +34,32 @@ pub fn title<'a>(doc: &'a Document) -> Option<Cow<'a, str>> {
     }
 
     // 2. Try <h1> (longest, >2 words)
-    let h1_list: Vec<String> = doc.find(Name("h1")).filter_map(|n| n.as_text().map(|s| s.trim().to_string())).collect();
+    let h1_list: Vec<String> = doc
+        .find(Name("h1"))
+        .filter_map(|n| n.as_text().map(|s| s.trim().to_string()))
+        .collect();
     if !h1_list.is_empty() {
         let mut sorted = h1_list.clone();
         sorted.sort_by_key(|s| s.len());
         let longest = sorted.last().unwrap();
         if longest.split_whitespace().count() > 2 {
-            let processed = postprocess_title(&longest.split_whitespace().filter(|x| !x.is_empty()).collect::<Vec<_>>().join(" "));
+            let processed = postprocess_title(
+                &longest
+                    .split_whitespace()
+                    .filter(|x| !x.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
             return Some(Cow::Owned(processed));
         }
     }
 
     // 3. Try <title>
-    if let Some(title_tag) = doc.find(Name("title")).next().and_then(|n| n.as_text().map(str::trim)) {
+    if let Some(title_tag) = doc
+        .find(Name("title"))
+        .next()
+        .and_then(|n| n.as_text().map(str::trim))
+    {
         let t = title_tag.trim();
         if !t.is_empty() {
             return Some(Cow::Owned(postprocess_title(t)));
@@ -55,7 +68,10 @@ pub fn title<'a>(doc: &'a Document) -> Option<Cow<'a, str>> {
 
     // 4. Advanced heuristics fallback
     // Re-extract <h1> and <title> for heuristics
-    let h1_list: Vec<String> = doc.find(Name("h1")).filter_map(|n| n.as_text().map(|s| s.trim().to_string())).collect();
+    let h1_list: Vec<String> = doc
+        .find(Name("h1"))
+        .filter_map(|n| n.as_text().map(|s| s.trim().to_string()))
+        .collect();
     let mut title_text_h1 = String::new();
     if !h1_list.is_empty() {
         let mut sorted = h1_list.clone();
@@ -64,7 +80,10 @@ pub fn title<'a>(doc: &'a Document) -> Option<Cow<'a, str>> {
         title_text_h1 = longest.clone();
     }
 
-    let title_tag = doc.find(Name("title")).next().and_then(|n| n.as_text().map(str::trim));
+    let title_tag = doc
+        .find(Name("title"))
+        .next()
+        .and_then(|n| n.as_text().map(str::trim));
     let mut title_text = title_tag.unwrap_or("").to_string();
 
     // Get og:title/twitter:title for fallback
@@ -81,7 +100,12 @@ pub fn title<'a>(doc: &'a Document) -> Option<Cow<'a, str>> {
     }
 
     // Filtering for comparison (alphanumeric only, lowercased)
-    let filter = |s: &str| s.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase();
+    let filter = |s: &str| {
+        s.chars()
+            .filter(|c| c.is_alphanumeric())
+            .collect::<String>()
+            .to_lowercase()
+    };
     let filter_title_text = filter(&title_text);
     let filter_title_text_h1 = filter(&title_text_h1);
     let filter_title_text_fb = filter(&title_text_fb);

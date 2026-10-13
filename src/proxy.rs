@@ -7,9 +7,9 @@
 mod tests {
     use crate::Extrablatt;
     use testcontainers::{
+        GenericImage,
         core::{IntoContainerPort, WaitFor},
         runners::AsyncRunner,
-        GenericImage,
     };
 
     /// Test that proxy configuration is accepted and used.
@@ -19,14 +19,19 @@ mod tests {
         // Start Squid proxy container
         let container = GenericImage::new("ubuntu/squid", "latest")
             .with_exposed_port(3128.tcp())
-            .with_wait_for(WaitFor::message_on_stderr("Accepting HTTP Socket connections"))
+            .with_wait_for(WaitFor::message_on_stderr(
+                "Accepting HTTP Socket connections",
+            ))
             .start()
             .await;
 
         let container = match container {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Failed to start Squid container (Docker may not be running): {}", e);
+                eprintln!(
+                    "Failed to start Squid container (Docker may not be running): {}",
+                    e
+                );
                 return; // Skip test if Docker is not available
             }
         };

@@ -1,8 +1,8 @@
+use select::document::Document;
+use select::predicate::Name;
 use std::borrow::Cow;
 use std::collections::HashSet;
 use url::Url;
-use select::document::Document;
-use select::predicate::{Name};
 
 /// Extract the `href` attribute for all `<a>` tags of the document.
 pub fn all_urls<'a>(doc: &'a Document) -> Vec<Cow<'a, str>> {

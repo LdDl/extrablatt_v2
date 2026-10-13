@@ -1,7 +1,7 @@
-use select::document::Document;
 use crate::Language;
-use crate::video::VideoNode;
 use crate::extract_node::article_node;
+use crate::video::VideoNode;
+use select::document::Document;
 
 /// All video content in the article.
 pub fn videos<'a>(doc: &'a Document, lang: Option<Language>) -> Vec<VideoNode<'a>> {

@@ -1,7 +1,7 @@
-use select::document::Document;
-use select::predicate::{Attr};
-use url::Url;
 use crate::extract_meta::meta_content;
+use select::document::Document;
+use select::predicate::Attr;
+use url::Url;
 
 /// Extract the thumbnail for the article.
 pub fn meta_thumbnail_url(doc: &Document, base_url: Option<&Url>) -> Option<Url> {

@@ -36,9 +36,7 @@ pub enum ExtrablattError {
     UrlNotInitialized,
     /// The base URL is invalid.
     #[error("url {url:?} can not be a base url")]
-    BaseUrlInvalid {
-        url: reqwest::Url,
-    },
+    BaseUrlInvalid { url: reqwest::Url },
     /// Failed to parse user agent header.
     #[error("Failed to parse user agent header")]
     UserAgentParseError,
@@ -47,7 +45,5 @@ pub enum ExtrablattError {
     Reqwest(#[source] reqwest::Error),
     /// Error parsing URL.
     #[error("Failed to parse URL: {error}")]
-    UrlParseError {
-        error: reqwest::Error,
-    },
+    UrlParseError { error: reqwest::Error },
 }

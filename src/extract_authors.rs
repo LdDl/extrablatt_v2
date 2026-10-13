@@ -1,21 +1,41 @@
-use std::borrow::Cow;
-use std::collections::HashSet;
+use lazy_static::lazy_static;
 use regex::Regex;
 use select::document::Document;
-use lazy_static::lazy_static;
+use std::borrow::Cow;
+use std::collections::HashSet;
 
-use crate::text::{author_text};
+use crate::text::author_text;
 
 /// Author extraction constants (from newspaper4k)
 const AUTHOR_ATTRS: [&str; 6] = ["name", "rel", "itemprop", "class", "id", "property"];
 const AUTHOR_VALS: [&str; 12] = [
-    "author", "byline", "dc.creator", "byl", "article:author", "article:author_name",
-    "story-byline", "article-author", "parsely-author", "sailthru.author", "citation_author",
-    "article-author"
+    "author",
+    "byline",
+    "dc.creator",
+    "byl",
+    "article:author",
+    "article:author_name",
+    "story-byline",
+    "article-author",
+    "parsely-author",
+    "sailthru.author",
+    "citation_author",
+    "article-author",
 ];
 const AUTHOR_STOP_WORDS: [&str; 13] = [
-    "By", "Reuters", "IANS", "AP", "AFP", "PTI", "ANI", "DPA", "Senior Reporter",
-    "Reporter", "Writer", "Opinion Writer", "Opinion Writer"
+    "By",
+    "Reuters",
+    "IANS",
+    "AP",
+    "AFP",
+    "PTI",
+    "ANI",
+    "DPA",
+    "Senior Reporter",
+    "Reporter",
+    "Writer",
+    "Opinion Writer",
+    "Opinion Writer",
 ];
 
 lazy_static! {
@@ -37,15 +57,16 @@ fn is_in_footer_section(doc: &Document, node_index: usize) -> bool {
             if let Some(class) = n.attr("class") {
                 let class_lower = class.to_lowercase();
                 // Skip authors from footer, bottom sections, sidebars, widgets, and opinion blocks
-                if class_lower.contains("articlebottom") ||
-                   class_lower.contains("article-bottom") ||
-                   class_lower.contains("footer") ||
-                   class_lower.contains("sidebar") ||
-                   class_lower.contains("widget") ||
-                   class_lower.contains("related-") ||
-                   class_lower.contains("recommendation") ||
-                   class_lower.contains("block-opinions") ||
-                   class_lower.contains("draggable") {
+                if class_lower.contains("articlebottom")
+                    || class_lower.contains("article-bottom")
+                    || class_lower.contains("footer")
+                    || class_lower.contains("sidebar")
+                    || class_lower.contains("widget")
+                    || class_lower.contains("related-")
+                    || class_lower.contains("recommendation")
+                    || class_lower.contains("block-opinions")
+                    || class_lower.contains("draggable")
+                {
                     return true;
                 }
             }
@@ -63,7 +84,11 @@ pub fn authors<'a>(doc: &'a Document) -> Vec<Cow<'a, str>> {
         if let select::node::Data::Element(tag, attrs) = &node.data {
             let tag_name = tag.local.as_ref().to_lowercase();
             // Skip script, style, time, and figcaption tags (figcaption often contains photo credits, not article authors)
-            if tag_name == "script" || tag_name == "style" || tag_name == "time" || tag_name == "figcaption" {
+            if tag_name == "script"
+                || tag_name == "style"
+                || tag_name == "time"
+                || tag_name == "figcaption"
+            {
                 continue;
             }
 
@@ -81,7 +106,9 @@ pub fn authors<'a>(doc: &'a Document) -> Vec<Cow<'a, str>> {
                                 found_author = true;
                                 let mut content = String::new();
                                 if tag_name == "meta" {
-                                    if let Some(c) = attrs.iter().find(|(a, _)| a.local.as_ref().eq_ignore_ascii_case("content")) {
+                                    if let Some(c) = attrs.iter().find(|(a, _)| {
+                                        a.local.as_ref().eq_ignore_ascii_case("content")
+                                    }) {
                                         content = c.1.as_ref().to_string();
                                     }
                                 }
@@ -132,7 +159,8 @@ fn clean_author(s: &str) -> String {
     }
     // Remove HTML tags using cached regex
     out = RE_HTML_TAGS.replace_all(&out, "").to_string();
-    out.trim_matches(|c: char| c == '.' || c == ',' || c == '-' || c == '/' || c.is_whitespace()).to_string()
+    out.trim_matches(|c: char| c == '.' || c == ',' || c == '-' || c == '/' || c.is_whitespace())
+        .to_string()
 }
 
 fn contains_digits(s: &str) -> bool {
@@ -154,7 +182,7 @@ fn parse_byline(s: &str) -> Vec<String> {
         // Extract first 2 words first (to handle cases like "Name Surname job title company.com")
         let words: Vec<&str> = t.split_whitespace().collect();
         if words.len() < 2 {
-            continue;  // Need at least 2 words for a name
+            continue; // Need at least 2 words for a name
         }
         let name = if words.len() > 2 {
             words[..2].join(" ")

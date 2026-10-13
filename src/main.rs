@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use futures::{stream, StreamExt};
+use futures::{StreamExt, stream};
 use structopt::StructOpt;
 use url::Url;
 

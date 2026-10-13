@@ -1,6 +1,6 @@
-use std::borrow::Cow;
 use select::document::Document;
 use select::predicate::{Attr, Name, Predicate};
+use std::borrow::Cow;
 
 /// Extract a given meta content form document.
 pub fn meta_content<'a, 'b>(
