@@ -10,6 +10,12 @@ pub enum ArticleError {
     UnsuccessfulRequest(String),
     DocumentReadError(String),
     Reqwest(reqwest::Error),
+    HttpStatus(reqwest::StatusCode),
+    LimitExceeded {
+        resource: &'static str,
+        limit: usize,
+    },
+    Download(Box<crate::ExtrablattError>),
     Other(String),
 }
 
@@ -23,6 +29,11 @@ impl fmt::Display for ArticleError {
                 write!(f, "Failed to read {} html as document.", url)
             }
             ArticleError::Reqwest(e) => write!(f, "Reqwest error: {}", e),
+            ArticleError::HttpStatus(status) => write!(f, "Article HTTP request failed: {status}"),
+            ArticleError::LimitExceeded { resource, limit } => {
+                write!(f, "{resource} exceeds limit {limit}")
+            }
+            ArticleError::Download(error) => write!(f, "Article download failed: {error}"),
             ArticleError::Other(msg) => write!(f, "{}", msg),
         }
     }
@@ -32,6 +43,7 @@ impl std::error::Error for ArticleError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             ArticleError::Reqwest(e) => Some(e),
+            ArticleError::Download(error) => Some(error.as_ref()),
             _ => None,
         }
     }
@@ -40,6 +52,23 @@ impl std::error::Error for ArticleError {
 impl From<reqwest::Error> for ArticleError {
     fn from(e: reqwest::Error) -> Self {
         ArticleError::Reqwest(e)
+    }
+}
+
+impl From<crate::ExtrablattError> for ArticleError {
+    fn from(error: crate::ExtrablattError) -> Self {
+        match error {
+            crate::ExtrablattError::HttpRequestFailure { error }
+            | crate::ExtrablattError::Reqwest(error)
+            | crate::ExtrablattError::UrlParseError { error } => Self::Reqwest(error),
+            crate::ExtrablattError::NoHttpSuccessResponse { response } => {
+                Self::HttpStatus(response.status())
+            }
+            crate::ExtrablattError::LimitExceeded { resource, limit } => {
+                Self::LimitExceeded { resource, limit }
+            }
+            other => Self::Download(Box::new(other)),
+        }
     }
 }
 
@@ -285,6 +314,20 @@ impl Article {
         ArticleBuilder::new(url)
     }
 
+    /// Serialize the selected article node while preserving its markup.
+    ///
+    /// The fragment is not sanitized and is distinct from the original response source.
+    pub fn article_html(&self) -> Option<String> {
+        crate::extract_node::article_node(&self.doc, self.language.clone()).map(|node| node.html())
+    }
+
+    /// Format the publication date, preserving a source timezone when available.
+    ///
+    /// The existing date type remains unchanged. Naive dates stay timezone-free.
+    pub fn publication_date_iso8601(&self) -> Option<String> {
+        crate::publication_date::publication_date_iso8601(self)
+    }
+
     /// Drops the article's html [`select::document::Document`].
     pub fn drop_document(self) -> PureArticle {
         PureArticle {
@@ -292,6 +335,53 @@ impl Article {
             content: self.content,
             language: self.language,
         }
+    }
+}
+
+/// An article with its original supplied HTML or decoded HTTP response body.
+///
+/// `None` means source bytes were not retained, for example when reading a previously cached DOM. Serializing a DOM does not reconstruct the original HTML source.
+#[derive(Debug)]
+pub struct ArticleWithSource {
+    pub article: Article,
+    pub raw_html: Option<String>,
+}
+
+impl ArticleWithSource {
+    pub fn new<U: IntoUrl, T: AsRef<str>>(url: U, html: T) -> Result<Self, ArticleError> {
+        Self::with_extractor(url, html, &DefaultExtractor::default())
+    }
+
+    pub fn with_extractor<U, T, TExtract>(
+        url: U,
+        html: T,
+        extractor: &TExtract,
+    ) -> Result<Self, ArticleError>
+    where
+        U: IntoUrl,
+        T: AsRef<str>,
+        TExtract: Extractor,
+    {
+        Self::with_extractor_and_lang(url, html, extractor, Language::default())
+    }
+
+    pub fn with_extractor_and_lang<U, T, TExtract>(
+        url: U,
+        html: T,
+        extractor: &TExtract,
+        language: Language,
+    ) -> Result<Self, ArticleError>
+    where
+        U: IntoUrl,
+        T: AsRef<str>,
+        TExtract: Extractor,
+    {
+        let raw_html = html.as_ref().to_owned();
+        let article = Article::with_extractor_and_lang(url, &raw_html, extractor, language)?;
+        Ok(Self {
+            article,
+            raw_html: Some(raw_html),
+        })
     }
 }
 
@@ -313,6 +403,9 @@ pub struct ArticleBuilder {
     timeout: Option<Duration>,
     language: Option<Language>,
     browser_user_agent: Option<String>,
+    max_response_bytes: Option<usize>,
+    proxy: Option<String>,
+    no_system_proxy: bool,
 }
 
 impl ArticleBuilder {
@@ -324,6 +417,9 @@ impl ArticleBuilder {
             timeout: None,
             language: None,
             browser_user_agent: None,
+            max_response_bytes: None,
+            proxy: None,
+            no_system_proxy: false,
         })
     }
 
@@ -342,10 +438,33 @@ impl ArticleBuilder {
         self
     }
 
+    /// Bound the decoded response body retained for an article.
+    pub fn max_response_bytes(mut self, limit: usize) -> Self {
+        self.max_response_bytes = Some(limit);
+        self
+    }
+
+    /// Disable automatic proxies from the environment unless an explicit proxy is set.
+    pub fn no_system_proxy(mut self) -> Self {
+        self.no_system_proxy = true;
+        self
+    }
+
+    pub fn proxy<T: Into<String>>(mut self, proxy: T) -> Self {
+        self.proxy = Some(proxy.into());
+        self
+    }
+
     /// Downloads the article and extract it's content using the
     /// [`crate::DefaultExtractor`].
     pub async fn get(self) -> Result<Article, ArticleError> {
-        self.get_with_extractor(&DefaultExtractor::default()).await
+        Ok(self.get_with_source().await?.article)
+    }
+
+    /// Download the article and retain its decoded response body.
+    pub async fn get_with_source(self) -> Result<ArticleWithSource, ArticleError> {
+        self.get_with_extractor_and_source(&DefaultExtractor::default())
+            .await
     }
 
     /// Downloads the article and extracts it's content using the provided
@@ -354,6 +473,13 @@ impl ArticleBuilder {
         self,
         extractor: &TExtract,
     ) -> Result<Article, ArticleError> {
+        Ok(self.get_with_extractor_and_source(extractor).await?.article)
+    }
+
+    pub async fn get_with_extractor_and_source<TExtract: Extractor>(
+        self,
+        extractor: &TExtract,
+    ) -> Result<ArticleWithSource, ArticleError> {
         let url = match self.url {
             Some(u) => u,
             None => return Err(ArticleError::UrlNotInitialized),
@@ -380,27 +506,21 @@ impl ArticleBuilder {
             };
             headers.insert(USER_AGENT, user_agent);
 
-            Client::builder().default_headers(headers).timeout(timeout)
+            let mut builder = Client::builder().default_headers(headers).timeout(timeout);
+            if self.no_system_proxy {
+                builder = builder.no_proxy();
+            }
+            if let Some(proxy) = self.proxy {
+                builder = builder.proxy(reqwest::Proxy::all(proxy)?);
+            }
+            builder
         };
 
-        let resp = builder
-            .build()?
-            .get(url)
-            .send()
-            .await
-            .map_err(ArticleError::Reqwest)?;
-
-        if !resp.status().is_success() {
-            return Err(ArticleError::UnsuccessfulRequest(format!(
-                "{:?}",
-                resp.url()
-            )));
-        }
-
-        let url = resp.url().to_owned();
-        let bytes = resp.bytes().await.map_err(ArticleError::Reqwest)?;
-        let doc = Document::from_read(&*bytes)
-            .map_err(|_| ArticleError::DocumentReadError(format!("{:?}", url)))?;
+        let client = builder.build()?;
+        let downloaded = crate::download::fetch_html(&client, url, self.max_response_bytes).await?;
+        let url = downloaded.url;
+        let raw_html = downloaded.html;
+        let doc = Document::from(raw_html.as_str());
 
         let content = extractor
             .article_content(
@@ -417,11 +537,14 @@ impl ArticleBuilder {
             .or(self.language)
             .unwrap_or_default();
 
-        Ok(Article {
-            url,
-            doc,
-            content,
-            language: final_language,
+        Ok(ArticleWithSource {
+            article: Article {
+                url,
+                doc,
+                content,
+                language: final_language,
+            },
+            raw_html: Some(raw_html),
         })
     }
 }
@@ -571,5 +694,181 @@ impl<'a> ArticleContentBuilder<'a> {
             images: self.images.unwrap_or_default(),
             videos: self.videos.unwrap_or_default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    const HTML: &str = "<!doctype html><html lang='en'><head><title>Fixture article title</title></head><body><nav>Navigation</nav><h1>Actual <em>article</em> title</h1><div itemprop='articleBody'><p>The article contains an <strong>important</strong> statement and a <a href='/source'>source link</a> with enough information to identify the article content.</p><script>sourceScript()</script></div></body></html>";
+
+    fn serve_once(
+        body: Vec<u8>,
+        status: u16,
+        delay: Duration,
+    ) -> (String, thread::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let handle = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.windows(4).any(|value| value == b"\r\n\r\n") {
+                let read = socket.read(&mut buffer).unwrap();
+                assert!(read > 0);
+                request.extend_from_slice(&buffer[..read]);
+            }
+            thread::sleep(delay);
+            let headers = format!(
+                "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = socket.write_all(headers.as_bytes());
+            let _ = socket.write_all(&body);
+            String::from_utf8(request).unwrap()
+        });
+        (url, handle)
+    }
+
+    #[test]
+    fn supplied_source_is_preserved_separately_from_article_markup() {
+        let parsed = ArticleWithSource::new("https://example.com/news/test", HTML).unwrap();
+        assert_eq!(parsed.raw_html.as_deref(), Some(HTML));
+        let markup = parsed.article.article_html().unwrap();
+        assert!(markup.contains("<strong>important</strong>"));
+        assert!(markup.contains("href=\"/source\""));
+        assert!(!markup.contains("Navigation"));
+        assert!(markup.contains("sourceScript()"));
+    }
+
+    #[tokio::test]
+    async fn builder_returns_article_and_source_from_one_request() {
+        let (url, server) = serve_once(HTML.as_bytes().to_vec(), 200, Duration::ZERO);
+        let parsed = Article::builder(&url)
+            .unwrap()
+            .no_system_proxy()
+            .get_with_source()
+            .await
+            .unwrap();
+        assert_eq!(parsed.raw_html.as_deref(), Some(HTML));
+        assert_eq!(
+            parsed.article.content.title.as_deref(),
+            Some("Actual article title")
+        );
+        assert_eq!(parsed.article.language, Language::English);
+        assert!(server.join().unwrap().starts_with("GET / HTTP/1.1"));
+    }
+
+    struct FixtureExtractor;
+
+    impl Extractor for FixtureExtractor {
+        fn title<'a>(&self, _doc: &'a Document) -> Option<Cow<'a, str>> {
+            Some(Cow::Borrowed("Custom extractor title"))
+        }
+    }
+
+    #[tokio::test]
+    async fn custom_extractor_works_with_source_and_existing_get() {
+        let (url, server) = serve_once(HTML.as_bytes().to_vec(), 200, Duration::ZERO);
+        let parsed = Article::builder(&url)
+            .unwrap()
+            .no_system_proxy()
+            .get_with_extractor_and_source(&FixtureExtractor)
+            .await
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(parsed.raw_html.as_deref(), Some(HTML));
+        assert_eq!(
+            parsed.article.content.title.as_deref(),
+            Some("Custom extractor title")
+        );
+
+        let (url, server) = serve_once(HTML.as_bytes().to_vec(), 200, Duration::ZERO);
+        let parsed = Article::builder(&url)
+            .unwrap()
+            .no_system_proxy()
+            .get_with_extractor(&FixtureExtractor)
+            .await
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(
+            parsed.content.title.as_deref(),
+            Some("Custom extractor title")
+        );
+    }
+
+    #[tokio::test]
+    async fn builder_preserves_typed_timeout() {
+        let (url, server) = serve_once(HTML.as_bytes().to_vec(), 200, Duration::from_millis(150));
+        let error = Article::builder(&url)
+            .unwrap()
+            .no_system_proxy()
+            .timeout(Duration::from_millis(25))
+            .get_with_source()
+            .await
+            .unwrap_err();
+        server.join().unwrap();
+        assert!(matches!(error, ArticleError::Reqwest(error) if error.is_timeout()));
+    }
+
+    #[tokio::test]
+    async fn builder_preserves_typed_response_limit() {
+        let (url, server) = serve_once(HTML.as_bytes().to_vec(), 200, Duration::ZERO);
+        let error = Article::builder(&url)
+            .unwrap()
+            .no_system_proxy()
+            .max_response_bytes(64)
+            .get_with_source()
+            .await
+            .unwrap_err();
+        server.join().unwrap();
+        assert!(matches!(
+            error,
+            ArticleError::LimitExceeded { limit: 64, .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn builder_uses_explicit_proxy_and_user_agent() {
+        let (proxy, server) = serve_once(HTML.as_bytes().to_vec(), 200, Duration::ZERO);
+        let parsed = Article::builder("http://does-not-resolve.invalid/news/story")
+            .unwrap()
+            .no_system_proxy()
+            .proxy(proxy)
+            .browser_user_agent("FixtureClient/1")
+            .get_with_source()
+            .await
+            .unwrap();
+        let request = server.join().unwrap();
+        assert!(request.starts_with("GET http://does-not-resolve.invalid/news/story HTTP/1.1"));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("user-agent: fixtureclient/1")
+        );
+        assert_eq!(parsed.raw_html.as_deref(), Some(HTML));
+    }
+
+    #[tokio::test]
+    async fn http_error_retains_status_without_response_body() {
+        let (url, server) = serve_once(b"Internal server details".to_vec(), 503, Duration::ZERO);
+        let error = Article::builder(&url)
+            .unwrap()
+            .no_system_proxy()
+            .get_with_source()
+            .await
+            .unwrap_err();
+        server.join().unwrap();
+        assert!(matches!(
+            error,
+            ArticleError::HttpStatus(reqwest::StatusCode::SERVICE_UNAVAILABLE)
+        ));
     }
 }

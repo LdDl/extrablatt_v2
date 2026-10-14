@@ -2,11 +2,10 @@ use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::time::Duration;
 
-use bytes::Bytes;
 use fnv::FnvHashMap;
 use futures::stream::{self, Stream};
 use futures::task::Poll;
-use futures::{Future, FutureExt, StreamExt, TryFutureExt};
+use futures::{Future, StreamExt};
 use reqwest::Response;
 use reqwest::header::HeaderMap;
 #[cfg(not(target_arch = "wasm32"))]
@@ -32,6 +31,9 @@ pub struct Extrablatt<TExtractor: Extractor = DefaultExtractor> {
     language: Language,
     /// The parsed main page.
     main_page: Document,
+    main_source: Option<String>,
+    main_requested_url: Url,
+    download_budget: crate::download::DownloadBudget,
     /// Url of the main page.
     base_url: Url,
     /// The [`crate::Extractor`] used for content retrieval.
@@ -127,6 +129,7 @@ impl<TExtractor: Extractor> Extrablatt<TExtractor> {
     /// # }
     /// ```
     pub async fn download_articles(&mut self) -> ArticleDownloadIter<'_, TExtractor> {
+        let this = &*self;
         let results = stream::iter(
             self.articles
                 .iter()
@@ -137,10 +140,9 @@ impl<TExtractor: Extractor> Extrablatt<TExtractor> {
                         None
                     }
                 })
-                .map(|url| {
-                    self.client.get(url.clone()).send().then(|res| async {
-                        (url, DocumentDownloadState::from_response(res).await)
-                    })
+                .map(|url| async move {
+                    let result = this.get_document(url.clone()).await;
+                    (url, result)
                 }),
         )
         .buffer_unordered(self.config.concurrency)
@@ -254,11 +256,10 @@ impl<TExtractor: Extractor> Extrablatt<TExtractor> {
         &mut self,
         items: Vec<Category>,
     ) -> Vec<Result<Category, (Category, ExtrablattError)>> {
-        let requests = stream::iter(items.into_iter().map(|cat| {
-            self.client
-                .get(cat.url.clone())
-                .send()
-                .then(|res| async { (cat, DocumentDownloadState::from_response(res).await) })
+        let this = &*self;
+        let requests = stream::iter(items.into_iter().map(|cat| async move {
+            let result = this.get_document(cat.url.clone()).await;
+            (cat, result)
         }))
         .buffer_unordered(self.config.concurrency)
         .collect::<Vec<_>>()
@@ -338,15 +339,23 @@ impl<TExtractor: Extractor> Extrablatt<TExtractor> {
     /// Refresh the main page, insert new categories and return the old
     /// document.
     pub async fn refresh_homepage(&mut self) -> Result<Document, ExtrablattError> {
-        let (main_page, _) = self
-            .get_document(self.base_url.clone())
-            .await
-            .map_err(|(_, err)| err)?;
-
-        // extract all available categories
+        let downloaded = crate::download::fetch_html_with_budget(
+            &self.client,
+            self.base_url.clone(),
+            self.config.max_response_bytes,
+            &self.download_budget,
+            self.config.http_success_only,
+        )
+        .await?;
+        self.main_requested_url = self.base_url.clone();
+        self.base_url = normalize_url(downloaded.url);
+        let old = std::mem::replace(
+            &mut self.main_page,
+            Document::from(downloaded.html.as_str()),
+        );
+        self.main_source = Some(downloaded.html);
         self.insert_new_categories();
-
-        Ok(std::mem::replace(&mut self.main_page, main_page))
+        Ok(old)
     }
 
     /// Execute a GET request and return the response wrapped in
@@ -355,8 +364,35 @@ impl<TExtractor: Extractor> Extrablatt<TExtractor> {
         &self,
         url: Url,
     ) -> Result<(Document, Instant), (DocumentDownloadState, ExtrablattError)> {
-        let resp = self.client.get(url).send().await;
-        DocumentDownloadState::from_response(resp).await
+        match crate::download::fetch_html_with_budget(
+            &self.client,
+            url,
+            self.config.max_response_bytes,
+            &self.download_budget,
+            self.config.http_success_only,
+        )
+        .await
+        {
+            Ok(downloaded) => Ok((Document::from(downloaded.html.as_str()), Instant::now())),
+            Err(error) => {
+                let state = match &error {
+                    ExtrablattError::NoHttpSuccessResponse { .. } => {
+                        DocumentDownloadState::NoHttpSuccessResponse {
+                            received: Instant::now(),
+                        }
+                    }
+                    ExtrablattError::ReadDocumentError { .. } => {
+                        DocumentDownloadState::DocumentReadFailure {
+                            received: Instant::now(),
+                        }
+                    }
+                    _ => DocumentDownloadState::HttpRequestFailure {
+                        received: Instant::now(),
+                    },
+                };
+                Err((state, error))
+            }
+        }
     }
 
     #[cfg(feature = "archive")]
@@ -368,193 +404,445 @@ impl<TExtractor: Extractor> Extrablatt<TExtractor> {
 }
 
 impl<TExtractor: Extractor + Unpin> Extrablatt<TExtractor> {
-    /// Converts the newspaper into a stream, yielding all available
-    /// [`crate::Article`]s.
-    pub fn into_stream(mut self) -> impl Stream<Item = Result<Article, ExtrablattError>> {
-        let mut articles = Vec::new();
-        let mut article_responses = Vec::new();
-
-        let mut extracted = FnvHashMap::default();
-        std::mem::swap(&mut extracted, &mut self.articles);
-
-        for (article_url, doc) in extracted.into_iter() {
-            match doc {
-                DocumentDownloadState::NotRequested => {
-                    article_responses.push(self.get_response(article_url.url));
-                }
-                DocumentDownloadState::Success { doc, .. } => {
-                    let article = Article {
-                        content: self
-                            .extractor
-                            .article_content(
-                                &doc,
-                                Some(&self.base_url),
-                                Some(self.language.clone()),
-                            )
-                            .into_owned(),
-                        url: article_url.url,
-                        language: self
-                            .extractor
-                            .meta_language(&doc)
-                            .unwrap_or_else(|| self.language.clone()),
-                        doc,
-                    };
-                    articles.push(article);
-                }
-                _ => {}
-            }
-        }
-
-        let mut categories = Vec::new();
-        let mut category_responses = Vec::new();
-        let mut extracted = FnvHashMap::default();
-        std::mem::swap(&mut extracted, &mut self.categories);
-
-        for (cat, doc) in extracted {
-            match doc {
-                DocumentDownloadState::NotRequested => {
-                    category_responses.push(self.get_response(cat.url));
-                }
-                DocumentDownloadState::Success { doc, .. } => {
-                    categories.push((cat, doc));
-                }
-                _ => {}
-            }
-        }
-
+    /// Stream articles using the same scheduler as the source-preserving API.
+    pub fn into_stream(self) -> ArticleStream<TExtractor> {
         ArticleStream {
-            paper: self,
-            article_responses,
-            articles,
-            categories,
-            category_responses,
+            inner: self.into_stream_with_source(),
         }
     }
 
-    fn get_response(&self, url: Url) -> PaperResponse {
-        Box::pin(
-            self.client
-                .get(url.clone())
-                .send()
-                .map_err(|error| ExtrablattError::HttpRequestFailure { error })
-                .and_then(|response| async {
-                    if !response.status().is_success() {
-                        Err(ExtrablattError::NoHttpSuccessResponse { response })
-                    } else {
-                        response
-                            .bytes()
-                            .await
-                            .map(|bytes| (url, bytes))
-                            .map_err(|error| ExtrablattError::HttpRequestFailure { error })
-                    }
-                }),
-        )
+    /// Stream articles together with their original decoded HTTP bodies.
+    pub fn into_stream_with_source(self) -> SourceArticleStream<TExtractor> {
+        SourceArticleStream::from_paper(self)
     }
 }
 
-type PaperResponse = Pin<Box<dyn Future<Output = Result<(Url, Bytes), ExtrablattError>>>>;
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct StreamStats {
+    pub discovered_articles: usize,
+    pub failed_articles: usize,
+    pub failed_categories: usize,
+    pub filtered_articles: usize,
+    /// Accepted body bytes, including any expansion introduced by charset decoding.
+    pub downloaded_bytes: usize,
+}
 
-type ReadyResponse = (usize, Result<(Url, Bytes), ExtrablattError>);
+#[derive(Debug, Default)]
+struct PageRoles {
+    article: bool,
+    category: bool,
+    article_done: bool,
+    category_done: bool,
+}
 
-/// Stream for getting a `Article` each at a time.
+#[derive(Clone)]
+struct CachedPage {
+    url: Url,
+    doc: Option<Document>,
+    raw_html: Option<String>,
+}
+
+type PaperResponse = Pin<
+    Box<
+        dyn Future<
+            Output = (
+                Url,
+                Result<crate::download::DownloadedHtml, ExtrablattError>,
+            ),
+        >,
+    >,
+>;
+
+/// Source-preserving article stream with bounded requests and deduplicated pages.
 #[must_use = "streams do nothing unless polled"]
-pub struct ArticleStream<TExtractor: Extractor> {
-    /// The origin newspaper.
+pub struct SourceArticleStream<TExtractor: Extractor = DefaultExtractor> {
     paper: Extrablatt<TExtractor>,
-    /// Pending responses for an Article html.
-    article_responses: Vec<PaperResponse>,
-    /// Pending responses for Category html.
-    category_responses: Vec<PaperResponse>,
-    /// Articles already available.
-    articles: Vec<Article>,
-    /// Categories already available.
-    categories: Vec<(Category, Document)>,
+    roles: std::collections::HashMap<Url, PageRoles>,
+    cache: std::collections::HashMap<Url, CachedPage>,
+    aliases: std::collections::HashMap<Url, Url>,
+    failed_pages: std::collections::HashSet<Url>,
+    discovered_articles: std::collections::HashSet<Url>,
+    discovered_categories: std::collections::HashSet<Url>,
+    emitted_articles: std::collections::HashSet<Url>,
+    processed_categories: std::collections::HashSet<Url>,
+    pending: std::collections::VecDeque<Url>,
+    active: futures::stream::FuturesUnordered<PaperResponse>,
+    ready_pages: std::collections::VecDeque<Url>,
+    results: std::collections::VecDeque<Result<crate::article::ArticleWithSource, ExtrablattError>>,
+    stats: StreamStats,
+    stopped: bool,
+}
+
+fn normalize_url(mut url: Url) -> Url {
+    url.set_fragment(None);
+    url
+}
+
+fn global_limit(error: &ExtrablattError) -> bool {
+    matches!(
+        error,
+        ExtrablattError::LimitExceeded {
+            resource: "total_bytes" | "article_urls" | "category_urls",
+            ..
+        }
+    )
+}
+
+impl<TExtractor: Extractor + Unpin> SourceArticleStream<TExtractor> {
+    fn from_paper(mut paper: Extrablatt<TExtractor>) -> Self {
+        let articles = std::mem::take(&mut paper.articles);
+        let categories = std::mem::take(&mut paper.categories);
+        let main_url = normalize_url(paper.base_url.clone());
+        let mut cache = std::collections::HashMap::new();
+        cache.insert(
+            main_url.clone(),
+            CachedPage {
+                url: main_url.clone(),
+                doc: if paper.main_source.is_some() {
+                    None
+                } else {
+                    Some(paper.main_page.clone())
+                },
+                raw_html: paper.main_source.take(),
+            },
+        );
+        let mut aliases = std::collections::HashMap::new();
+        aliases.insert(
+            normalize_url(paper.main_requested_url.clone()),
+            main_url.clone(),
+        );
+        let stats = StreamStats {
+            downloaded_bytes: paper.download_budget.used(),
+            ..Default::default()
+        };
+        let mut stream = Self {
+            paper,
+            roles: Default::default(),
+            cache,
+            aliases,
+            failed_pages: Default::default(),
+            discovered_articles: Default::default(),
+            discovered_categories: Default::default(),
+            emitted_articles: Default::default(),
+            processed_categories: Default::default(),
+            pending: Default::default(),
+            active: Default::default(),
+            ready_pages: Default::default(),
+            results: Default::default(),
+            stats,
+            stopped: false,
+        };
+        if stream.paper.config.concurrency == 0 {
+            stream.stop(ExtrablattError::InvalidConfig {
+                reason: "concurrency must be greater than zero",
+            });
+            return stream;
+        }
+        // Existing cached documents have no original source, so expose None without another GET.
+        for (article, state) in articles {
+            let url = normalize_url(article.url);
+            if let DocumentDownloadState::Success { doc, .. } = state {
+                stream.cache.entry(url.clone()).or_insert(CachedPage {
+                    url: url.clone(),
+                    doc: Some(doc),
+                    raw_html: None,
+                });
+            } else if !state.is_not_requested() {
+                stream.failed_pages.insert(url.clone());
+            }
+            stream.discover(url, false);
+        }
+        for (category, state) in categories {
+            let url = normalize_url(category.url);
+            if url == main_url || stream.aliases.get(&url) == Some(&main_url) {
+                continue;
+            }
+            if let DocumentDownloadState::Success { doc, .. } = state {
+                stream.cache.entry(url.clone()).or_insert(CachedPage {
+                    url: url.clone(),
+                    doc: Some(doc),
+                    raw_html: None,
+                });
+            } else if !state.is_not_requested() {
+                stream.failed_pages.insert(url.clone());
+            }
+            stream.discover(url, true);
+        }
+        let main_articles = stream
+            .paper
+            .extractor
+            .article_urls(&stream.paper.main_page, Some(&main_url));
+        for article in main_articles {
+            stream.discover(article.url, false);
+        }
+        stream
+    }
+
+    pub fn stats(&self) -> &StreamStats {
+        &self.stats
+    }
+
+    fn stop(&mut self, error: ExtrablattError) {
+        self.stopped = true;
+        self.pending.clear();
+        self.active.clear();
+        self.ready_pages.clear();
+        self.results.push_back(Err(error));
+    }
+
+    fn discover(&mut self, url: Url, category: bool) {
+        if self.stopped || !matches!(url.scheme(), "http" | "https") {
+            return;
+        }
+        let url = normalize_url(url);
+        let known = if category {
+            &mut self.discovered_categories
+        } else {
+            &mut self.discovered_articles
+        };
+        if known.contains(&url) {
+            return;
+        }
+        let limit = if category {
+            self.paper.config.max_category_urls
+        } else {
+            self.paper.config.max_article_urls
+        };
+        if let Some(limit) = limit {
+            if known.len() >= limit {
+                self.stop(ExtrablattError::LimitExceeded {
+                    resource: if category {
+                        "category_urls"
+                    } else {
+                        "article_urls"
+                    },
+                    limit,
+                });
+                return;
+            }
+        }
+        known.insert(url.clone());
+        self.stats.discovered_articles = self.discovered_articles.len();
+        let first_role = !self.roles.contains_key(&url);
+        let roles = self.roles.entry(url.clone()).or_default();
+        if category {
+            roles.category = true;
+        } else {
+            roles.article = true;
+        }
+        if self.failed_pages.contains(&url) {
+            self.fail_page(&url, ExtrablattError::PreviouslyFailedPage);
+        } else {
+            let key = self.aliases.get(&url).unwrap_or(&url);
+            if self.cache.contains_key(key) {
+                self.ready_pages.push_back(url);
+            } else if first_role {
+                self.pending.push_back(url);
+            }
+        }
+    }
+
+    fn fail_page(&mut self, url: &Url, error: ExtrablattError) {
+        if global_limit(&error) {
+            self.stop(error);
+            return;
+        }
+        self.failed_pages.insert(url.clone());
+        let roles = self.roles.get_mut(url).expect("scheduled page");
+        let article = roles.article && !roles.article_done;
+        let category = roles.category && !roles.category_done;
+        if article {
+            self.stats.failed_articles += 1;
+            roles.article_done = true;
+        }
+        if category {
+            self.stats.failed_categories += 1;
+            roles.category_done = true;
+        }
+        self.results.push_back(Err(if category && !article {
+            ExtrablattError::CategoryFailure {
+                error: Box::new(error),
+            }
+        } else {
+            error
+        }));
+    }
+
+    fn process_page(&mut self, requested: Url) {
+        let key = self.aliases.get(&requested).unwrap_or(&requested).clone();
+        let Some(page) = self.cache.get(&key).cloned() else {
+            return;
+        };
+        let doc = page
+            .doc
+            .clone()
+            .unwrap_or_else(|| Document::from(page.raw_html.as_deref().unwrap_or("")));
+        let roles = self.roles.get_mut(&requested).expect("discovered page");
+        if roles.category && !roles.category_done {
+            roles.category_done = true;
+            if self.processed_categories.insert(page.url.clone()) {
+                let urls = self.paper.extractor.article_urls(&doc, Some(&page.url));
+                for article in urls {
+                    self.discover(article.url, false);
+                }
+            }
+        }
+        if self.stopped {
+            return;
+        }
+        let roles = self.roles.get_mut(&requested).expect("discovered page");
+        if !roles.article || roles.article_done {
+            return;
+        }
+        roles.article_done = true;
+        if !self.emitted_articles.insert(page.url.clone()) {
+            return;
+        }
+        let content = self
+            .paper
+            .extractor
+            .article_content(&doc, Some(&page.url), Some(self.paper.language.clone()))
+            .into_owned();
+        let language = content
+            .language
+            .clone()
+            .unwrap_or_else(|| self.paper.language.clone());
+        if content
+            .text
+            .as_deref()
+            .is_none_or(|text| text.trim().is_empty())
+        {
+            self.stats.failed_articles += 1;
+            self.results.push_back(Err(ExtrablattError::EmptyArticle));
+        } else if !self.paper.config.is_complete(&content) {
+            self.stats.filtered_articles += 1;
+            self.results
+                .push_back(Err(ExtrablattError::IncompleteArticle {
+                    article: Box::new(PureArticle {
+                        url: page.url,
+                        content,
+                        language,
+                    }),
+                }));
+        } else {
+            self.results
+                .push_back(Ok(crate::article::ArticleWithSource {
+                    article: Article {
+                        url: page.url,
+                        doc,
+                        content,
+                        language,
+                    },
+                    raw_html: page.raw_html,
+                }));
+        }
+    }
+
+    fn start_requests(&mut self) {
+        while !self.stopped && self.active.len() < self.paper.config.concurrency {
+            let Some(requested) = self.pending.pop_front() else {
+                break;
+            };
+            let key = self.aliases.get(&requested).unwrap_or(&requested);
+            if self.cache.contains_key(key) {
+                self.ready_pages.push_back(requested);
+                continue;
+            }
+            let client = self.paper.client.clone();
+            let limit = self.paper.config.max_response_bytes;
+            let budget = self.paper.download_budget.clone();
+            let success_only = self.paper.config.http_success_only;
+            self.active.push(Box::pin(async move {
+                let result = crate::download::fetch_html_with_budget(
+                    &client,
+                    requested.clone(),
+                    limit,
+                    &budget,
+                    success_only,
+                )
+                .await;
+                (requested, result)
+            }));
+        }
+    }
+}
+
+impl<TExtractor: Extractor + Unpin> Stream for SourceArticleStream<TExtractor> {
+    type Item = Result<crate::article::ArticleWithSource, ExtrablattError>;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        loop {
+            self.stats.downloaded_bytes = self.paper.download_budget.used();
+            if let Some(result) = self.results.pop_front() {
+                return Poll::Ready(Some(result));
+            }
+            if self.stopped {
+                return Poll::Ready(None);
+            }
+            if let Some(url) = self.ready_pages.pop_front() {
+                self.process_page(url);
+                continue;
+            }
+            self.start_requests();
+            if !self.ready_pages.is_empty() {
+                continue;
+            }
+            match Pin::new(&mut self.active).poll_next(cx) {
+                Poll::Ready(Some((requested, result))) => {
+                    match result {
+                        Ok(downloaded) => {
+                            let url = normalize_url(downloaded.url);
+                            self.aliases.insert(requested.clone(), url.clone());
+                            self.cache.entry(url.clone()).or_insert_with(|| CachedPage {
+                                doc: None,
+                                raw_html: Some(downloaded.html),
+                                url,
+                            });
+                            self.ready_pages.push_back(requested);
+                        }
+                        Err(error) => self.fail_page(&requested, error),
+                    }
+                    // Poll newly discovered category work before yielding Pending.
+                    continue;
+                }
+                Poll::Ready(None) if self.pending.is_empty() => return Poll::Ready(None),
+                Poll::Ready(None) => continue,
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
+}
+
+/// Compatibility adapter for callers that only need extracted articles.
+#[must_use = "streams do nothing unless polled"]
+pub struct ArticleStream<TExtractor: Extractor = DefaultExtractor> {
+    inner: SourceArticleStream<TExtractor>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl ArticleStream<DefaultExtractor> {
-    /// Fetch all article urls from the page the url points to and
-    /// return a new stream of articles using the
-    /// [`crate::DefaultExtractor`].
-    ///
-    /// # Example
-    ///
-    /// Create a new [`crate::ArticleStream`] that yields all articles
-    /// referenced on `https:://example.com/some/path`
-    ///
-    /// ```no_run
-    /// # use extrablatt_v2::ArticleStream;
-    /// # use futures::StreamExt;
-    /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut stream = ArticleStream::new("https:://example.com/some/path").await?;
-    ///     while let Some(article) = stream.next().await {
-    ///         // ...
-    ///     }
-    /// #   Ok(())
-    /// # }
-    /// ```
-    pub async fn new<T: IntoUrl>(
-        url: T,
-    ) -> Result<ArticleStream<DefaultExtractor>, ExtrablattError> {
-        Ok(ArticleStream::new_with_extractor(url, DefaultExtractor).await?)
+    pub async fn new<T: IntoUrl>(url: T) -> Result<Self, ExtrablattError> {
+        Self::new_with_extractor(url, DefaultExtractor).await
     }
 }
 
 impl<TExtractor: Extractor + Unpin> ArticleStream<TExtractor> {
-    /// Fetch all article urls from the page the url points to and
-    /// return a new stream of articles using a designated
-    /// [`crate::Extractor`].
     pub async fn new_with_extractor<T: IntoUrl>(
         url: T,
         extractor: TExtractor,
-    ) -> Result<ArticleStream<TExtractor>, ExtrablattError> {
-        let paper = ExtrablattBuilder::new(url)?
+    ) -> Result<Self, ExtrablattError> {
+        Ok(ExtrablattBuilder::new(url)?
+            .categories(false)
             .build_with_extractor(extractor)
-            .await?;
-
-        let article_responses = paper
-            .extractor()
-            .article_urls(&paper.main_page, Some(&paper.base_url))
-            .into_iter()
-            .map(|article_url| paper.get_response(article_url.url))
-            .collect();
-
-        Ok(ArticleStream {
-            paper,
-            article_responses,
-            articles: Default::default(),
-            categories: Default::default(),
-            category_responses: Default::default(),
-        })
+            .await?
+            .into_stream())
     }
 
-    /// Queue in new requests for articles.
-    fn queue_category_articles(&mut self, doc: &Document) {
-        for article_url in self
-            .paper
-            .extractor
-            .article_urls(&doc, Some(&self.paper.base_url))
-            .into_iter()
-        {
-            self.article_responses
-                .push(self.paper.get_response(article_url.url));
-        }
-    }
-
-    /// Poll each item and return the index together with the response of first
-    /// ready future.
-    fn find_ready_response(
-        items: &mut [PaperResponse],
-        cx: &mut core::task::Context<'_>,
-    ) -> Option<ReadyResponse> {
-        items
-            .iter_mut()
-            .enumerate()
-            .find_map(|(i, f)| match f.as_mut().poll(cx) {
-                Poll::Pending => None,
-                Poll::Ready(resp) => Some((i, resp)),
-            })
+    pub fn stats(&self) -> &StreamStats {
+        self.inner.stats()
     }
 }
 
@@ -565,97 +853,9 @@ impl<TExtractor: Extractor + Unpin> Stream for ArticleStream<TExtractor> {
         mut self: Pin<&mut Self>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        loop {
-            if let Some(article) = self.articles.pop() {
-                return Poll::Ready(Some(Ok(article)));
-            }
-            if self.article_responses.is_empty() {
-                if let Some((_, doc)) = self.categories.pop() {
-                    self.queue_category_articles(&doc);
-                    continue;
-                }
-                if self.category_responses.is_empty() {
-                    return Poll::Ready(None);
-                }
-                match Self::find_ready_response(&mut self.category_responses, cx) {
-                    Some((idx, response)) => {
-                        let _ = self.category_responses.swap_remove(idx);
-                        match response {
-                            Ok((_, body)) => match Document::from_read(&*body) {
-                                Ok(doc) => self.queue_category_articles(&doc),
-                                Err(_) => {
-                                    return Poll::Ready(Some(Err(
-                                        ExtrablattError::ReadDocumentError { body },
-                                    )));
-                                }
-                            },
-                            Err(error) => return Poll::Ready(Some(Err(error))),
-                        }
-                        // Continue until work is polled or all categories are exhausted.
-                        continue;
-                    }
-                    None => return Poll::Pending,
-                }
-            }
-            let item = Self::find_ready_response(&mut self.article_responses, cx);
-
-            match item {
-                Some((idx, resp)) => {
-                    let _ = self.article_responses.swap_remove(idx);
-                    let article = match resp {
-                        Ok((url, body)) => {
-                            if let Ok(doc) = Document::from_read(&*body) {
-                                let content = self
-                                    .paper
-                                    .extractor
-                                    .article_content(
-                                        &doc,
-                                        Some(&self.paper.base_url),
-                                        Some(self.paper.language.clone()),
-                                    )
-                                    .into_owned();
-                                let language = self
-                                    .paper
-                                    .extractor
-                                    .meta_language(&doc)
-                                    .unwrap_or_else(|| self.paper.language.clone());
-
-                                if self.paper.config.is_complete(&content) {
-                                    Ok(Article {
-                                        url,
-                                        doc,
-                                        content,
-                                        language,
-                                    })
-                                } else {
-                                    Err(ExtrablattError::IncompleteArticle {
-                                        article: Box::new(PureArticle {
-                                            url,
-                                            content,
-                                            language,
-                                        }),
-                                    })
-                                }
-                            } else {
-                                Err(ExtrablattError::ReadDocumentError { body })
-                            }
-                        }
-                        Err(error) => Err(error),
-                    };
-                    return Poll::Ready(Some(article));
-                }
-                None => return Poll::Pending,
-            }
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (
-            self.articles
-                .len()
-                .saturating_add(self.article_responses.len()),
-            None,
-        )
+        Pin::new(&mut self.inner)
+            .poll_next(cx)
+            .map(|item| item.map(|result| result.map(|sourced| sourced.article)))
     }
 }
 
@@ -773,6 +973,16 @@ impl ExtrablattBuilder {
             return Err(ExtrablattError::BaseUrlInvalid { url: base_url });
         }
         let config = self.config.unwrap_or_default();
+        if config.concurrency == 0 {
+            return Err(ExtrablattError::InvalidConfig {
+                reason: "concurrency must be greater than zero",
+            });
+        }
+        if config.request_timeout.is_zero() {
+            return Err(ExtrablattError::InvalidConfig {
+                reason: "request timeout must be greater than zero",
+            });
+        }
         #[cfg(target_arch = "wasm32")]
         let client = {
             Client::builder()
@@ -806,14 +1016,26 @@ impl ExtrablattBuilder {
 
             client_builder.build().map_err(ExtrablattError::Reqwest)?
         };
-        let resp = client.get(base_url.clone()).send().await;
-        let (main_page, _) = DocumentDownloadState::from_response(resp)
-            .await
-            .map_err(|(_, err)| err)?;
+        let download_budget = crate::download::DownloadBudget::new(config.max_total_bytes);
+        let main_requested_url = base_url.clone();
+        let downloaded = crate::download::fetch_html_with_budget(
+            &client,
+            base_url,
+            config.max_response_bytes,
+            &download_budget,
+            config.http_success_only,
+        )
+        .await?;
+        let main_page = Document::from(downloaded.html.as_str());
+        let main_source = Some(downloaded.html);
+        let base_url = normalize_url(downloaded.url);
         let mut paper = Extrablatt {
             client,
             language: self.language.unwrap_or_default(),
             main_page,
+            main_source,
+            main_requested_url,
+            download_budget,
             base_url,
             extractor,
             categories: Default::default(),
@@ -863,32 +1085,6 @@ pub enum DocumentDownloadState {
 }
 
 impl DocumentDownloadState {
-    /// Wraps the [`hyper::Response`] into the proper state.
-    pub(crate) async fn from_response(
-        response: Result<Response, reqwest::Error>,
-    ) -> Result<(Document, Instant), (Self, ExtrablattError)> {
-        match response {
-            Ok(response) => {
-                if response.status().is_success() {
-                    Self::read_response(response).await
-                } else {
-                    Err((
-                        DocumentDownloadState::NoHttpSuccessResponse {
-                            received: Instant::now(),
-                        },
-                        ExtrablattError::NoHttpSuccessResponse { response },
-                    ))
-                }
-            }
-            Err(error) => Err((
-                DocumentDownloadState::HttpRequestFailure {
-                    received: Instant::now(),
-                },
-                ExtrablattError::HttpRequestFailure { error },
-            )),
-        }
-    }
-
     async fn read_response(
         response: Response,
     ) -> Result<(Document, Instant), (DocumentDownloadState, ExtrablattError)> {
@@ -998,6 +1194,10 @@ pub struct Config {
     request_timeout: Duration,
     /// Number of concurrent requests for downloading articles/categories.
     concurrency: usize,
+    max_response_bytes: Option<usize>,
+    max_total_bytes: Option<usize>,
+    max_article_urls: Option<usize>,
+    max_category_urls: Option<usize>,
 }
 
 impl Config {
@@ -1148,6 +1348,10 @@ pub struct ConfigBuilder {
     request_timeout: Option<Duration>,
     /// Number of concurrent requests for downloading articles/categories.
     concurrency: Option<usize>,
+    max_response_bytes: Option<usize>,
+    max_total_bytes: Option<usize>,
+    max_article_urls: Option<usize>,
+    max_category_urls: Option<usize>,
 }
 
 impl ConfigBuilder {
@@ -1234,6 +1438,31 @@ impl ConfigBuilder {
         self
     }
 
+    /// Bound each downloaded body and its decoded UTF-8 representation.
+    /// Native clients check incoming chunks; wasm clients check after browser buffering.
+    pub fn max_response_bytes(mut self, limit: usize) -> Self {
+        self.max_response_bytes = Some(limit);
+        self
+    }
+    /// Bound accepted body bytes across the lifetime of this newspaper instance.
+    /// Includes the homepage, refreshes, categories, articles and charset expansion.
+    pub fn max_total_bytes(mut self, limit: usize) -> Self {
+        self.max_total_bytes = Some(limit);
+        self
+    }
+    /// Bound distinct normalized article URLs discovered by the streaming APIs.
+    /// Legacy bulk download methods do not apply this URL-count limit.
+    pub fn max_article_urls(mut self, limit: usize) -> Self {
+        self.max_article_urls = Some(limit);
+        self
+    }
+    /// Bound distinct normalized category URLs processed by the streaming APIs.
+    /// Legacy bulk download methods do not apply this URL-count limit.
+    pub fn max_category_urls(mut self, limit: usize) -> Self {
+        self.max_category_urls = Some(limit);
+        self
+    }
+
     pub fn build(self) -> Config {
         Config {
             min_word_count: self.min_word_count,
@@ -1254,6 +1483,10 @@ impl ConfigBuilder {
                 .request_timeout
                 .unwrap_or_else(|| Duration::from_secs(Config::DEFAULT_REQUEST_TIMEOUT_SEC)),
             concurrency: self.concurrency.unwrap_or(Config::DEFAULT_CONCURRENCY),
+            max_response_bytes: self.max_response_bytes,
+            max_total_bytes: self.max_total_bytes,
+            max_article_urls: self.max_article_urls,
+            max_category_urls: self.max_category_urls,
         }
     }
 
@@ -1279,6 +1512,10 @@ impl ConfigBuilder {
             user_agent: None,
             request_timeout: None,
             concurrency: None,
+            max_response_bytes: None,
+            max_total_bytes: None,
+            max_article_urls: None,
+            max_category_urls: None,
         }
     }
 }
@@ -1331,3 +1568,7 @@ impl<'a, T: Extractor> DerefMut for ArticleDownloadIter<'a, T> {
 #[cfg(test)]
 #[path = "stream_regression_tests.rs"]
 mod stream_regression_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "source_stream_tests.rs"]
+mod source_stream_tests;

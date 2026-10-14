@@ -117,9 +117,10 @@
 /// Reexported to implement custom extractors.
 pub use select;
 
-pub use crate::article::{Article, PureArticle};
+pub use crate::article::{Article, ArticleWithSource, PureArticle};
+pub use crate::error::ExtrablattError;
 pub use crate::category::Category;
-pub use crate::extrablatt::{ArticleStream, Config, Extrablatt, ExtrablattBuilder};
+pub use crate::extrablatt::{ArticleStream, SourceArticleStream, StreamStats, Config, Extrablatt, ExtrablattBuilder};
 pub use crate::extract::{DefaultExtractor, Extractor};
 pub use crate::language::Language;
 
@@ -127,6 +128,8 @@ pub mod article;
 pub mod category;
 pub mod clean;
 pub mod date;
+pub mod download;
+pub(crate) mod publication_date;
 mod error;
 pub mod extrablatt;
 pub mod extract;

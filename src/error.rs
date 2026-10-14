@@ -31,6 +31,19 @@ pub enum ExtrablattError {
         /// The found article and its content.
         article: Box<PureArticle>,
     },
+    #[error("Configured {resource} limit exceeded ({limit})")]
+    LimitExceeded {
+        resource: &'static str,
+        limit: usize,
+    },
+    #[error("Invalid configuration: {reason}")]
+    InvalidConfig { reason: &'static str },
+    #[error("Article extraction returned no text")]
+    EmptyArticle,
+    #[error("Category download failed: {error}")]
+    CategoryFailure { error: Box<ExtrablattError> },
+    #[error("Page download previously failed in this crawl")]
+    PreviouslyFailedPage,
     /// The base URL was not initialized.
     #[error("Url of the article must be initialized.")]
     UrlNotInitialized,

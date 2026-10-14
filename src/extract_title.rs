@@ -36,7 +36,8 @@ pub fn title<'a>(doc: &'a Document) -> Option<Cow<'a, str>> {
     // 2. Try <h1> (longest, >2 words)
     let h1_list: Vec<String> = doc
         .find(Name("h1"))
-        .filter_map(|n| n.as_text().map(|s| s.trim().to_string()))
+        .map(|node| node.text().split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|title| !title.is_empty())
         .collect();
     if !h1_list.is_empty() {
         let mut sorted = h1_list.clone();
@@ -58,7 +59,7 @@ pub fn title<'a>(doc: &'a Document) -> Option<Cow<'a, str>> {
     if let Some(title_tag) = doc
         .find(Name("title"))
         .next()
-        .and_then(|n| n.as_text().map(str::trim))
+        .map(|node| node.text().split_whitespace().collect::<Vec<_>>().join(" "))
     {
         let t = title_tag.trim();
         if !t.is_empty() {
@@ -70,7 +71,8 @@ pub fn title<'a>(doc: &'a Document) -> Option<Cow<'a, str>> {
     // Re-extract <h1> and <title> for heuristics
     let h1_list: Vec<String> = doc
         .find(Name("h1"))
-        .filter_map(|n| n.as_text().map(|s| s.trim().to_string()))
+        .map(|node| node.text().split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|title| !title.is_empty())
         .collect();
     let mut title_text_h1 = String::new();
     if !h1_list.is_empty() {
@@ -83,8 +85,8 @@ pub fn title<'a>(doc: &'a Document) -> Option<Cow<'a, str>> {
     let title_tag = doc
         .find(Name("title"))
         .next()
-        .and_then(|n| n.as_text().map(str::trim));
-    let mut title_text = title_tag.unwrap_or("").to_string();
+        .map(|node| node.text().split_whitespace().collect::<Vec<_>>().join(" "));
+    let title_text = title_tag.unwrap_or_default();
 
     // Get og:title/twitter:title for fallback
     let mut title_text_fb = String::new();
@@ -164,6 +166,9 @@ pub fn title<'a>(doc: &'a Document) -> Option<Cow<'a, str>> {
     if !candidate.is_empty() {
         return Some(Cow::Owned(postprocess_title(&candidate)));
     }
+    if !title_text_h1.is_empty() {
+        return Some(Cow::Owned(postprocess_title(&title_text_h1)));
+    }
     None
 }
 
@@ -171,4 +176,44 @@ fn postprocess_title(title: &str) -> String {
     let mut t = title.replace(MOTLEY_REPLACEMENT.0, MOTLEY_REPLACEMENT.1);
     t = t.replace(TITLE_REPLACEMENTS.0, TITLE_REPLACEMENTS.1);
     t.trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn heading_includes_nested_elements() {
+        let document =
+            Document::from("<title>Site name</title><h1>Actual <em>article</em> title</h1>");
+        assert_eq!(title(&document).as_deref(), Some("Actual article title"));
+    }
+
+    #[test]
+    fn title_element_is_a_fallback_without_headings() {
+        let document = Document::from(
+            "<html><head><title>News &amp; analysis</title></head><body></body></html>",
+        );
+        assert_eq!(title(&document).as_deref(), Some("News & analysis"));
+    }
+
+    #[test]
+    fn short_heading_is_available_without_title_or_metadata() {
+        let document = Document::from("<h1>Breaking <span>news</span></h1>");
+        assert_eq!(title(&document).as_deref(), Some("Breaking news"));
+    }
+
+    #[test]
+    fn explicit_metadata_keeps_precedence() {
+        let document = Document::from(
+            "<meta property='og:title' content='Publisher headline'><title>Site name</title><h1>A different article heading</h1>",
+        );
+        assert_eq!(title(&document).as_deref(), Some("Publisher headline"));
+    }
+
+    #[test]
+    fn empty_headings_do_not_hide_title() {
+        let document = Document::from("<title>Fallback headline</title><h1> </h1>");
+        assert_eq!(title(&document).as_deref(), Some("Fallback headline"));
+    }
 }

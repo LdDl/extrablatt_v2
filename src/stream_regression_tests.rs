@@ -18,34 +18,45 @@ impl Extractor for EmptyExtractor {
     }
 }
 
-fn empty_stream(extractor: EmptyExtractor) -> ArticleStream<EmptyExtractor> {
-    ArticleStream {
-        paper: Extrablatt {
-            client: Client::new(),
-            language: Language::default(),
-            main_page: Document::from("<html></html>"),
-            base_url: Url::parse("http://fixture.invalid/").unwrap(),
-            extractor,
-            articles: FnvHashMap::default(),
-            categories: FnvHashMap::default(),
-            config: Config::default(),
-        },
-        article_responses: Vec::new(),
-        articles: Vec::new(),
-        categories: Vec::new(),
-        category_responses: Vec::new(),
+fn empty_stream(extractor: EmptyExtractor) -> SourceArticleStream<EmptyExtractor> {
+    let visited = extractor.visited.clone();
+    let stream = Extrablatt {
+        client: Client::new(),
+        language: Language::default(),
+        main_page: Document::from("<html></html>"),
+        main_source: Some("<html></html>".into()),
+        main_requested_url: Url::parse("http://fixture.invalid/").unwrap(),
+        download_budget: crate::download::DownloadBudget::new(None),
+        base_url: Url::parse("http://fixture.invalid/").unwrap(),
+        extractor,
+        articles: FnvHashMap::default(),
+        categories: FnvHashMap::default(),
+        config: Config::default(),
     }
+    .into_stream_with_source();
+    visited.store(0, Ordering::SeqCst);
+    stream
+}
+
+fn ready_category(stream: &mut SourceArticleStream<EmptyExtractor>, path: &str) {
+    let url = Url::parse(&format!("http://fixture.invalid/{path}")).unwrap();
+    stream.discover(url.clone(), true);
+    stream.pending.clear();
+    stream.active.push(Box::pin(async move {
+        (
+            url.clone(),
+            Ok(crate::download::DownloadedHtml {
+                url,
+                html: "<html></html>".into(),
+            }),
+        )
+    }));
 }
 
 #[tokio::test]
 async fn empty_downloaded_category_finishes_without_another_wakeup() {
     let mut stream = empty_stream(EmptyExtractor::default());
-    stream.category_responses.push(Box::pin(async {
-        Ok((
-            Url::parse("http://fixture.invalid/empty").unwrap(),
-            Bytes::from_static(b"<html></html>"),
-        ))
-    }));
+    ready_category(&mut stream, "empty");
     let waker = noop_waker();
     let mut context = Context::from_waker(&waker);
     assert!(matches!(
@@ -60,12 +71,7 @@ async fn empty_category_does_not_leave_later_categories_unpolled() {
     let visited = extractor.visited.clone();
     let mut stream = empty_stream(extractor);
     for path in ["first", "second"] {
-        stream.category_responses.push(Box::pin(async move {
-            Ok((
-                Url::parse(&format!("http://fixture.invalid/{path}")).unwrap(),
-                Bytes::from_static(b"<html></html>"),
-            ))
-        }));
+        ready_category(&mut stream, path);
     }
     let waker = noop_waker();
     let mut context = Context::from_waker(&waker);
@@ -82,10 +88,16 @@ async fn all_cached_categories_are_visited_before_stream_ends() {
     let visited = extractor.visited.clone();
     let mut stream = empty_stream(extractor);
     for path in ["first", "second"] {
-        stream.categories.push((
-            Category::new(Url::parse(&format!("http://fixture.invalid/{path}")).unwrap()),
-            Document::from("<html></html>"),
-        ));
+        let url = Url::parse(&format!("http://fixture.invalid/{path}")).unwrap();
+        stream.cache.insert(
+            url.clone(),
+            CachedPage {
+                url: url.clone(),
+                doc: Some(Document::from("<html></html>")),
+                raw_html: None,
+            },
+        );
+        stream.discover(url, true);
     }
     let waker = noop_waker();
     let mut context = Context::from_waker(&waker);
